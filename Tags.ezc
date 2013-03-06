@@ -1,0 +1,1054 @@
+# Copyright (c) 2010-2011 by IMC.  All rights reserved.
+
+# This program output various tags and patterns need for the
+# robotag fiducial software.
+
+easy_c 1.0
+
+library Easy_C
+library CV
+library Extractor
+library Math
+library Map
+library High_GUI
+library FEC
+
+define SVG			# Scalable Vector Graphics
+    record
+	stream Out_Stream	# Output stream
+	height Double		# Height
+	width Double		# Width
+	units String		# Units
+	x_offset Double		# Amount to offset X by
+	x_scale Double		# Amount to scale X by
+	y_offset Double		# Amount to offset Y by
+	y_scale Double		# Amount to scale Y by
+
+routine main@Easy_C
+    takes arguments Array[String]
+    returns Integer
+
+    # Initialize some variables:
+    border :@= 1t
+    calibrate :@= 0f
+    capture_device :@= 0i
+    chessboard_generate :@= 0f
+    extractor :@= create@Extractor()
+    map :@= extractor.map
+    image_names :@= new@Array[String]()
+    loop_count :@= 0
+    show :@= 0f
+    track :@= 0f
+    tag_ids :@= new@Array[Unsigned]()
+    #tag_size :@= 160
+    tag_size :@= 200
+    pi :@= map.pi
+
+    # Parse command line arguments:
+    size :@= arguments.size
+    if arguments.size < 2
+	call d@("usage: Tags [-b][-c][-g][-h][-l count][-s mm][-v vid_num]\n\")
+	call d@("\t\image-file-name or tag_number...\n\")
+    else
+	index :@= 1
+	while index < size
+	    argument :@= arguments[index]
+	    argument_size :@= argument.size
+	    if argument_size != 0
+		character :@= argument[0]
+		if character = '-'
+		    # We have an option:
+		    if equal@(argument, "-b")
+			# Remove border:
+			border := 0f
+		    else_if equal@(argument, "-c")
+			# Do calibration:
+			calibrate := 1t
+		    else_if equal@(argument, "-g")
+			# Generate a chessboard pattern for optics calibration:
+			chessboard_generate := 1t
+		    else_if equal@(argument, "-h")
+			# Show the image as it is processed:
+			show := 1t
+		    else_if equal@(argument, "-l")
+			# Set the loop count:
+			if index + 1 < size
+			    loop_count :=
+			      unsigned_convert@(arguments[index + 1])
+			    index := index + 1
+		    else_if equal@(argument, "-s")
+			# Set the tag size (in millimeters):
+			if index + 1 < size
+			    tag_size := unsigned_convert@(arguments[index + 1])
+			    index := index + 1
+		    else_if equal@(argument, "-t")
+			# Track the tags:
+			track := 1t
+		    else_if equal@(argument, "-v")
+			# Set the capture device number:
+			if index + 1 < size
+			    capture_device :=
+			      integer_convert@(arguments[index + 1])
+			    index := index + 1
+		    else
+			call d@(form@("Unrecognized option %v%\n\") /
+			  f@(argument))
+		else_if is_decimal_digit@(argument[0])
+		    # We have a tag number:
+		    call append@(tag_ids, unsigned_convert@(argument))
+		else_if suffix_match@(".jpg", argument) ||
+		  suffix_match@(".jpeg", argument) ||
+		  suffix_match@(".tga", argument)
+		    # Try an image suffix:
+		    call append@(image_names, argument)
+		else
+		    call d@(form@("Unrecognized arugment %v%\n\") /
+		      f@(argument))
+	    index := index + 1
+
+    if chessboard_generate
+	call d@("Generating Chessboard\n")
+	call chessboard_generate@Easy_C(10, 7, 22.0)
+
+    # Generate any requested tag id files:
+    size := tag_ids.size
+    index := 0
+    while index < size
+	tag_id :@= tag_ids[index]
+	call d@(form@("tag_id:%d% (tag_size=%f%mm)\n\") %
+	  f@(tag_id) / f@(tag_size))
+	call tag_svg_write@(extractor, tag_id, tag_size, border)
+	index := index + 1
+
+    if calibrate
+	capture :@= create_camera_capture@CV(capture_any@CV + capture_device)
+	call camera_calibrate@Extractor(capture, 20i, 20i)
+	 
+    # Create some 
+    bearing_limit :@= 0.0
+    speed_limit :@= 0
+    stall :@= 0
+    target_limit :@= 0.0
+    twist_limit :@= 0
+    ramp :@= 0
+    navigate_p :@= 0.0
+    navigate_i :@= 0.0
+    navigate_d :@= 0.0
+    linear :@= 0.0
+    camera_dx :@= -15.0
+    camera_dy :@= 0.0
+    camera_twist :@= 0.0
+    grip_p :@= 0.0
+    grip_i :@= 0.0
+    grip_d :@= 0.0
+    left_force_increment :@= 0
+    right_force_increment :@= 0
+
+    constants :@= create@Constants(bearing_limit, speed_limit, stall,
+      target_limit, twist_limit, ramp, navigate_p, navigate_i, navigate_d,
+      linear, camera_dx, camera_dy, camera_twist, grip_p, grip_i,  grip_d,
+      left_force_increment, right_force_increment)
+
+    # If tags.xml exists, read it in:
+    extractor.constants := robot_read@(map, "robot.xml")
+    extractor.constants := constants
+    map.locked := 1t
+
+    track_svg :@= null@SVG
+    if track
+	track_svg := open@SVG("tags_track", 600.0, 300.0, 1.0, 1.0, "mm")
+
+    # Iterate over any JPEG files:
+    if loop_count = 0
+	call d@("loop_count = 0\n\")
+
+	# Iterate over each of the images:
+	size := image_names.size
+ 	index := 0
+	while index < size
+	    image_name :@= image_names[index]
+	    original_image :@= null@CV_Image
+	    if suffix_match@(".tga", image_name)
+		original_image := tga_read@(original_image, image_name)
+	    else
+		original_image := load_image@CV(image_name, load_image_color@CV)
+	    if original_image == null@CV_Image
+		call d@(form@("Unable to read %v%\n\") / f@(image_name))
+	    else
+		call tga_write@(original_image, "foo.tga")
+		call d@(form@("File=%v%\n\") / f@(image_name))
+		call size_set@(extractor,
+		  original_image.width, original_image.height)
+		#tags :@= extract@(extractor, original_image, 0, 0xffffff00)
+		tags :@= extract@(extractor, original_image, 0, 0)
+		call d@(form@("extractor.constants.camera_dx=%2f%\n\") /
+		  f@(extractor.constants.camera_dx))
+
+		#call d@(form@("[%d%]:Tag[%d%]=(x:%2f%,y:%2f%,b:%2f%)") %
+		#  f@(index) % f@(extractor.last_tag.id) %
+		#  f@(extractor.last_tag.x) % f@(extractor.last_tag.y) /
+		#  f@(extractor.last_tag.angle * 180.0 / pi))
+		call d@(form@("[%d%]:") / f@(index))
+
+		tags_size :@= tags.size
+
+		gui :@= null@String
+		if tags_size != 0
+		    gui := new@String()
+		    tag0 :@= tags[0]
+		    call string_append@(gui,
+		      form@("camera %d% %2f% %2f% %4f% %d%") %
+		      f@(tag0.id) % f@(tag0.robot_x) % f@(tag0.robot_y) %
+		      f@(tag0.robot_bearing * 180.0 / pi) / f@(tags_size))
+
+		tags_index :@= 0
+		tag_previous :@= null@Tag
+		while tags_index < tags_size
+		    tag :@= tags[tags_index]
+		    dx :@= tag.camera_x - tag.x
+		    dy :@= tag.camera_y - tag.y
+		    dist :@= square_root@(dx * dx + dy * dy)
+		    error :@= 0.0
+		    if tags_index != 0
+			dx := tag_previous.camera_x - tag.camera_x
+			dy := tag_previous.camera_y - tag.camera_y
+			error := square_root@(dx * dx + dy * dy)
+		    if dist < 10000.00
+			#call d@(form@("{cx=%2f% cy=%2f% tx=%2f% ty=%2f%}") %
+			#  f@(tag.camera_x) % f@(tag.camera_y) %
+			#  f@(tag.x) / f@(tag.y))
+			call d@(form@(
+			 " (%2f%) [i:%d% x:%2f% y:%2f% b:%2f% dr=%i% ln=%2f%]")%
+			  f@(error) % f@(tag.id) %
+			  f@(tag.camera_x) % f@(tag.camera_y) %
+			  f@(tag.camera_bearing * 180.0 / pi) %
+			  f@(tag.direction) / f@(dist))
+			tag_previous := tag
+		    call string_append@(gui, form@(" %d% %2f% %2f% %4f%") %
+		      f@(tag.id) % f@(tag.camera_x) % f@(tag.camera_y) /
+		      f@(tag.camera_bearing * 180.0 / pi))
+		    tags_index := tags_index + 1
+		call d@("\n\")
+
+		if gui !== null@String
+		    call d@(form@("%s%\n\") / f@(gui))
+
+		if show
+		    call image_show@(extractor, original_image, show)
+		if track
+		    call extractor_record@(track_svg, extractor)
+
+
+		#call d@("\n\")
+	    index := index + 1
+
+	# Update the map:
+	#call map_update@(map)
+
+	# Test to make sure we can compute pathes:
+	if 0f
+	    # Look up 4 {Tag}'s:
+	    tag41 :@= tag_lookup@(map, 41, "41 lookup")
+	    tag42 :@= tag_lookup@(map, 42, "42 lookup")
+	    tag43 :@= tag_lookup@(map, 43, "43 lookup")
+	    tag44 :@= tag_lookup@(map, 44, "44 lookup")
+
+	    # Lookup for {Way}'s:
+	    way41 :@= way_lookup@(tag41, 0, "Tags")
+	    way42 :@= way_lookup@(tag42, 0, "Tags")
+	    way43 :@= way_lookup@(tag43, 0, "Tags")
+	    way44 :@= way_lookup@(tag44, 0, "Tags")
+
+	    # Lookup 4 ways:
+	    indent :@= 0xffffff0
+	    path :@= path_find@(map, way41, way43, indent)
+	    path := path_find@(map, way43, way41, indent)
+	    path := path_find@(map, way41, way42, indent)
+	    path := path_find@(map, way42, way41, indent)
+	    path := path_find@(map, way42, way43, indent)
+	    path := path_find@(map, way43, way42, indent)
+	    path := path_find@(map, way41, way41, indent)
+	    path := path_find@(map, way42, way42, indent)
+	    path := path_find@(map, way43, way43, indent)
+
+    else
+	call d@("loop_count != 0\n\")
+	if image_names.size = 0
+	    call d@("use video stream\n\")
+	    # Use a video stream:
+	    capture :@=
+	      create_camera_capture@CV(capture_any@CV + capture_device)
+	    assert capture !== null@CV_Capture
+	    frame :@= query_frame@CV(capture)
+	    assert frame !== null@CV_Image
+	    width :@= frame.width
+	    height :@= frame.height
+	    call size_set@(extractor, width, height)
+	    window_name :@= "Test"
+	    if show
+		call named_window@CV(window_name, window_auto_size@CV)
+	    index := 0
+	    while index < loop_count
+		call d@("#")
+		frame := query_frame@CV(capture)
+		if frame == null@CV_Image
+		    break
+		if show
+		    call show_image@CV(window_name, frame)
+		tags :@= extract@(extractor, frame, 0, 0xffffff00)
+		if tags.size != 0
+		    call d@(form@(
+		      "id,x,y,a=%d% %2f%\t\%2f%\t\%2f%\t\%2f%\t\%d% %2f%\n\") %
+                      f@(extractor.last_tag.id) %
+		      f@(extractor.last_x) % f@(extractor.last_y) %
+		      f@(extractor.last_bearing * 180.0 / pi) %
+		      f@(extractor.last_distance) %
+		      f@(extractor.last_tag.direction) /
+		      f@(extractor.last_tag.twist * 180.0 / pi))
+		if show
+		    if wait_key@CV(33i) = 27i
+			break
+		if track
+		    call extractor_record@(track_svg, extractor)
+
+		index := index + 1
+	else
+	    size := image_names.size
+	    call d@(form@("images_names.size= %d%\n\") / f@(size))
+	    window_name :@= "Test"
+	    if show
+		call named_window@CV(window_name, window_auto_size@CV)
+	    index := 0
+	    while index < size
+		image_name :@= image_names[index]
+		original_image :@= null@CV_Image
+		if suffix_match@(".tga", image_name)
+		    original_image := tga_read@(original_image, image_name)
+		else
+		    original_image :=
+		      load_image@CV(image_name, load_image_color@CV)
+
+		assert original_image !== null@CV_Image
+		call d@(form@("[%d%] read %v%\n\") % f@(index) / f@(image_name))
+		call size_set@(extractor,
+		  original_image.width, original_image.height)
+		tags :@= extract@(extractor, original_image, 0, 0xffffff00)
+		call image_show@(extractor, original_image, show)
+
+		tags_size :@= tags.size
+		tags_index :@= 0
+		while tags_index < tags_size
+		    tag :@= tags[tags_index]
+		    call d@(form@("[%d%] tx:%d% ty:%d%\n\") %
+		      f@(tag.id) % f@(tag.center_x) / f@(tag.center_y))
+		    tags_index := tags_index + 1
+
+		if show
+		    if wait_key@CV(33i) = 27i
+			break
+		if track
+		    call extractor_record@(track_svg, extractor)
+
+		index := index + 1
+
+    if track
+	call close@(track_svg)
+
+    # Write out the tags.xml file:	
+
+    xml_stream :@= open@Out_Stream("tags.xml")
+    call put@("<Robot>\n\", xml_stream)
+    call xml_write@(constants, 1, xml_stream)
+    call xml_write@(map, 1, xml_stream)
+    call put@("</Robot>\n\", xml_stream)
+    call close@(xml_stream)
+
+    return 0i
+
+
+# {SVG} routines:
+
+routine extractor_record@SVG
+    takes track_svg SVG
+    takes extractor Extractor
+    returns_nothing
+
+    # This routine will record where the robot is from {extractor}
+    # into {track_svg}.
+
+    scale :@= 1.5
+    x_offset :@= 50.0
+    y_offset :@= 50.0
+    last_tag_id :@= extractor.last_tag.id
+    last_x :@= scale * extractor.last_x + x_offset
+    last_y :@= scale * extractor.last_y + y_offset
+    previous_x :@= scale * extractor.previous_x + x_offset
+    previous_y :@= scale * extractor.previous_y + y_offset
+    last_bearing :@= extractor.last_bearing
+    color :@= "black"
+    switch last_tag_id & 3
+      case 0
+	color := "red"
+      case 1
+	color := "green"
+      case 2
+	color := "blue"
+      case 3
+	color := "cyan"
+    if extractor.previous_bearing > -1000.00
+	call line@(track_svg, previous_x, previous_y, last_x, last_y, "black")
+    call line@(track_svg, last_x, last_y,
+      last_x + 10.0 * cosine@(last_bearing),
+      last_y + 10.0 * sine@(last_bearing), color)
+    
+
+routine close@SVG
+    takes svg SVG
+    returns_nothing
+
+    # This routine will close {svg}.
+
+    svg_stream :@= svg.stream
+    call put@("</svg>\n\", svg_stream)
+    call close@(svg_stream)
+    svg.stream := null@Out_Stream
+
+
+routine line@SVG
+    takes svg SVG
+    takes x1 Double
+    takes y1 Double
+    takes x2 Double
+    takes y2 Double
+    takes stroke String
+    returns_nothing
+
+    # This routine will draw a {stroke} color line from
+    # ({x1},{y1}) to ({x2},{y2}).
+
+    svg_stream :@= svg.stream
+    x_offset :@= svg.x_offset
+    y_offset :@= svg.y_offset
+    x_scale :@= svg.x_scale
+    y_scale :@= svg.y_scale
+    units :@= svg.units
+    call put@(form@("<line x1=\dq\%f%%s%\dq\ y1=\dq\%f%%s%\dq\") %
+      f@((x1 + x_offset) * x_scale) % f@(units) %
+      f@((y1 + y_offset) * y_scale) / f@(units), svg_stream)
+    call put@(form@(" x2=\dq\%f%%s%\dq\ y2=\dq\%f%%s%\dq\") %
+      f@((x2 + x_offset) * x_scale) % f@(units) %
+      f@((y2 + y_offset) * y_scale) / f@(units), svg_stream)
+    call put@(form@(" style=\dq\stroke:%s%\dq\/>\n\") / f@(stroke), svg_stream)
+
+
+routine open@SVG
+    takes base_name String
+    takes width Double
+    takes height Double
+    takes x_scale Double
+    takes y_scale Double
+    takes units String
+    returns SVG
+
+    # This routine will create and return an open {SVG} object.
+
+    svg :@= null@SVG
+    file_name :@= read_only_copy@(form@("%s%.svg") / f@(base_name))
+    svg_stream :@= open@Out_Stream(file_name)
+    if svg_stream !== null@Out_Stream
+	svg := new@SVG()
+	svg.height := height
+	svg.stream := svg_stream
+	svg.width := width
+	svg.units := units
+	svg.x_scale := x_scale
+	svg.y_scale := y_scale
+	svg.x_offset := 0.0
+	svg.y_offset := 0.0
+
+	call put@("<?xml version=\dq\1.0\dq\ standalone=\dq\no\dq\?>\n,n\",
+	  svg_stream)
+	call put@("<!DOCTYPE svg PUBLIC \dq\-//W3C//DTD SVG 1.1//EN\dq,n\",
+	  svg_stream)
+	call put@(
+	  " \dq\http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\dq\>\n,n\",
+	  svg_stream)
+	call put@(form@("<svg width=\dq\%f%%s%\dq\ height=\dq\%f%%s%\dq,n") %
+	  f@(width * x_scale) % f@(units) % f@(height * y_scale) / f@(units),
+	  svg_stream)
+	call put@(" version=\dq\1.1\dq,n\", svg_stream)
+	call put@(" xmlns=\dq\http://www.w3.org/2000/svg\dq\>\n,n\", svg_stream)
+
+    return svg
+
+
+routine rectangle@SVG
+    takes svg SVG
+    takes x Double
+    takes y Double
+    takes width Double
+    takes height Double
+    takes stroke String
+    takes fill String
+    returns_nothing
+
+    # This routine will draw a {width} by {height} rectangle with one corner
+    # at ({x},{y}) and an exterior color of {stroke} and a fill color of {fill}.
+
+    svg_stream :@= svg.stream
+    x_offset :@= svg.x_offset
+    y_offset :@= svg.y_offset
+    x_scale :@= svg.x_scale
+    y_scale :@= svg.y_scale
+    x_final :@= (x + x_offset) * x_scale
+    y_final :@= (y + y_offset) * y_scale
+    units :@= svg.units
+    call put@(form@("<rect x=\dq\%f%%s%\dq\ y=\dq\%f%%s%\dq\") %
+      f@(x_final) % f@(units) % f@(y_final) / f@(units), svg_stream)
+    call put@(form@(" width=\dq\%f%%s%\dq\ height=\dq\%f%%s%\dq\") %
+      f@(width * x_scale) % f@(units) % f@(height * y_scale) / f@(units),
+      svg_stream)
+    call put@(form@(" style=\dq\stroke:%s%; fill:%s%\dq\/>\n\") %
+      f@(stroke) / f@(fill), svg_stream)
+
+
+routine tag_bit@SVG
+    takes svg SVG
+    takes cell_width Double
+    takes row Unsigned
+    takes column Unsigned
+    takes border Logical
+    returns_nothing
+
+    # This routine will draw a black bit at {row} and {colomn} in the 12 x 12
+    # matrix that makes up a tag and output it to {svg}.  If {border} is {false}
+    # the matrix is offset to the left by one.
+
+    call tag_bits@(svg, cell_width, row, column, row, column, border)
+
+
+routine tag_bits@SVG
+    takes svg SVG
+    takes cell_width Double
+    takes first_column Unsigned
+    takes first_row Unsigned
+    takes last_column Unsigned
+    takes last_row Unsigned
+    takes border Logical
+    returns_nothing
+
+    # This routine will draw a row or column of black bits from
+    # ({first_column}, {first_row} to ({last_column}, {last_row})
+    # in the 12 x 12 matrix that makes up a tag to {svg}.  If {border}
+    # is {false}, the matrix is offset by the left by one.
+
+    delta :@= 0
+    if !border
+	delta := 1
+
+    first_row := 11 - first_row
+    last_row := 11 - last_row
+
+    if first_column > last_column
+	temporary_column :@= first_column
+	first_column := last_column
+	last_column := temporary_column
+    if first_row > last_row
+	temporary_row :@= first_row
+	first_row := last_row
+	last_row := temporary_row
+
+    color :@= "black"
+    call rectangle@(svg,
+      double@(first_column - delta) * cell_width,
+      double@(first_row - delta) * cell_width,
+      double@(last_column - first_column + 1) * cell_width,
+      double@(last_row - first_row + 1) * cell_width,
+      color, color)
+
+
+routine text@SVG
+    takes svg SVG
+    takes message String
+    takes x Double
+    takes y Double
+    takes font_family String
+    takes font_size Unsigned
+    returns_nothing
+
+    # This routine will draw a {message} at ({x},{y}) with {font_size} font
+    # of type {font_family}.
+
+    svg_stream :@= svg.stream
+    x_offset :@= svg.x_offset
+    y_offset :@= svg.y_offset
+    x_scale :@= svg.x_scale
+    y_scale :@= svg.y_scale
+    units :@= svg.units
+    call put@(form@("<text x=\dq\%f%%s%\dq\ y=\dq\%f%%s%\dq\") %
+      f@((x + x_offset) * x_scale) % f@(units) %
+      f@((y + y_offset) * y_scale) / f@(units), svg_stream)
+    call put@(form@(" style=\dq\font-family:%s%; font-size:%d%\dq\>") %
+      f@(font_family) / f@(font_size), svg_stream)
+    call put@(form@("%s%</text>\n\") / f@(message), svg_stream)
+
+# {Extractor} routines:
+
+
+routine camera_calibrate@Extractor
+    takes capture CV_Capture
+    takes n_boards Integer
+    takes frame_step Integer
+    returns_nothing
+
+    call d@(form@("frame_step=%d%\n\") / f@(frame_step))
+
+    # Enclosed corners horizontally on the chessboard:
+    board_width :@= 9i
+    # Enclosed corners vertically on the chessboard:
+    board_height :@= 6i
+    # Total enclosed corners on the board:
+    board_total :@= board_width * board_height
+    board_size :@= create@CV_Size(board_width, board_height)
+ 
+    call named_window@CV("Snapshot", window_auto_size@CV)
+    call named_window@CV("Raw Video", window_auto_size@CV)
+ 
+    # Allocate storage for the parameters according to total number of
+    # corners and number of snapshots:
+    image_points :@= create_mat@CV(n_boards * board_total, 2i, f32c1@CV)
+    object_points :@= create_mat@CV(n_boards * board_total, 3i, f32c1@CV)
+    point_counts :@= create_mat@CV(n_boards, 1i, s32c1@CV)
+    intrinsic_matrix :@= create_mat@CV(3i, 3i, f32c1@CV)
+    distortion_coeffs :@= create_mat@CV(4i, 1i, f32c1@CV)
+ 
+    # Note:
+    # Intrinsic Matrix - 3x3 Lens Distorstion Matrix - 4x1
+    # [fx 0 cx]              [k1 k2 p1 p2   k3(optional)]
+    # [0 fy cy]
+    # [0  0  1]
+ 
+    corners :@= create@CV_Point2D32F_Vector(unsigned@(board_total))
+    successes :@= 0i
+    step :@= 0i
+    frame :@= 0i
+ 
+    image :@= query_frame@CV(capture)
+    image_width :@= image.width
+    image_height :@= image.height
+    image_size :@= create@CV_Size(image_width, image_height)
+    gray_image :@= create_image@CV(image_size, 8i, 1i)
+ 
+    term_criteria_type :@= term_criteria_iterations@CV | term_criteria_eps@CV
+    term_criteria :@= create@CV_Term_Criteria(term_criteria_type, 30i, 0.2)
+    size_11_11 :@= create@CV_Size(11i, 11i)
+    size_m1_m1 :@= create@CV_Size(-1i, -1i)
+
+    # Loop while successful captures equals total snapshots
+    # Successful captures implies when all the enclosed corners
+    # are detected from a snapshot:
+ 
+    while successes < n_boards    
+	frame := frame + 1i
+	if frame % frame_step = 0i
+	    # Find chessboard corners:
+	    corner_count :@= find_chessboard_corners@CV(image, board_size,
+	       corners, calib_cb_adaptive_thresh@CV | calib_cb_filter_quads@CV)
+	    call d@(form@("corner_count=%d%\n\") / f@(corner_count))
+  
+	    # Convert to gray:
+	    call cvt_color@CV(image, gray_image, bgr_to_gray@CV)
+                         
+	    # Get Subpixel accuracy on those corners:
+	    call find_corner_sub_pix@CV(gray_image,
+	      corners, corner_count, size_11_11, size_m1_m1, term_criteria)
+ 
+	    # Draw it:
+	    found :@= 0f
+	    if corner_count != 0i
+		found := 1t
+	    call draw_chessboard_corners@CV(image,
+	      board_size, corners, corner_count, found)
+    
+	    # If we got a good board, add it to our data:
+	    if corner_count = board_total
+		call show_image@CV("Snapshot", image)
+		# show in color if we did collect the image:
+		step := successes * board_total
+		i :@= step
+		j :@= 0i
+		while j < board_total
+		    call set_real_2d@CV(image_points, i, 0i,
+		      corners[unsigned@(j)].x)
+		    call set_real_2d@CV(image_points, i, 1i,
+		      corners[unsigned@(j)].y)
+		    call set_real_2d@CV(object_points, i, 0i,
+		      double@(j / board_width))
+		    call set_real_2d@CV(object_points, i, 1i,
+		      double@(j % board_width))
+		    call set_real_2d@CV(object_points, i, 2i, 0.0)
+		    i := i + 1i
+		    j := j + 1i
+		call set_real_2d@CV(point_counts,
+		  successes, 0i, double@(board_total))
+		successes := successes + 1i
+		call d@(form@("%d% successful snapshots out of %d%.\n\") %
+		  f@(successes) / f@(n_boards))
+	    else
+		# Show Gray if we didn't collect the image:
+		call show_image@CV("Snapshot", gray_image)
+   
+	# Handle pause/unpause and ESC:
+	c :@= wait_key@CV(15i)
+	if c = integer@('p')
+	    c := 0i
+	    while c != integer@('p') && c != 27i
+		c := wait_key@CV(250i)
+	if c = 27i
+	    call exit@System(-1)
+ 
+	# Get next image:
+	image := query_frame@CV(capture)
+	call show_image@CV("Raw Video", image)
+
+    call destroy_window@CV("Snapshot")
+ 
+    call d@("\n,n\ *** Calbrating the camera now...\n\")
+  
+    # Allocate matrices according to successful number of captures:
+    object_points2 :@= create_mat@CV(successes * board_total, 3i, f32c1@CV)
+    image_points2 :@= create_mat@CV(successes * board_total, 2i, f32c1@CV)
+    point_counts2 :@= create_mat@CV(successes, 1i, s32c1@CV)
+ 
+    # Tranfer the points to matrices:
+    i :@= 0i
+    while i < successes * board_total
+	call set_real_2d@CV(image_points2, i, 0i,
+	  get_real_2d@CV(image_points, i, 0i))
+	call set_real_2d@CV(image_points2, i, 1i,
+	  get_real_2d@CV(image_points, i, 1i))
+	call set_real_2d@CV(object_points2, i, 0i,
+	  get_real_2d@CV(object_points, i, 0i))
+	call set_real_2d@CV(object_points2, i, 1i,
+	  get_real_2d@CV(object_points, i, 1i))
+	call set_real_2d@CV(object_points2, i, 2i,
+	  get_real_2d@CV(object_points, i, 2i))
+	i := i + 1i
+  
+    i := 0i
+    while i < successes
+	# These are all the same number:
+	call set_real_2d@CV(point_counts2, i, 0i,
+	  get_real_2d@CV(point_counts, i, 0i))
+	i := i + 1i
+
+    # Not really needed:
+    #call release_mat@CV(object_points)
+    #call release_mat@(points)
+    #call release_mat@(point_counts)
+ 
+    # Initialize the intrinsic matrix with both the two focal
+    # lengths in a ratio of 1.0:
+ 
+    call set_real_2d@CV(intrinsic_matrix, 0i, 0i, 1.0)
+    call set_real_2d@CV(intrinsic_matrix, 1i, 1i, 1.0)
+ 
+    # Calibrate the camera
+    #______________________________________________________
+  
+    call calibrate_camera2@CV(object_points2, image_points2, point_counts2, 
+      image_size, intrinsic_matrix, distortion_coeffs, null@CV_Matrix,
+      null@CV_Matrix, 0i)
+                                            
+    # CV_CALIB_FIX_ASPECT_RATIO
+    #______________________________________________________
+ 
+    # Save values to file:
+    call d@(" *** Calibration Done!\n,n\")
+    call d@("Storing Intrinsics.xml and Distortions.xml files...\n\")
+    call save@(intrinsic_matrix, "Intrinsics.xml")
+    call save@(distortion_coeffs, "Distortion.xml")
+    call d@("Files saved.\n,n\")
+ 
+    call d@("Starting corrected display....\n\")
+ 
+    # Sample: load the matrices from the file:
+    storage :@= null@CV_Memory_Storage
+    intrinsic :@= load@CV("Intrinsics.xml", storage, null@String, null@String)
+    distortion :@= load@CV("Distortion.xml", storage, null@String, null@String)
+ 
+    # Build the undistort map used for all subsequent frames:
+    mapx :@= create_mat@CV(image_height, image_width, f32c1@CV)
+    mapy :@= create_mat@CV(image_height, image_width, f32c1@CV)
+    call init_undistort_map@CV(intrinsic, distortion, mapx, mapy)
+ 
+    # Run the camera to the screen, showing the raw and the undistorted image:
+    black :@= create@CV_Scalar(0.0, 0.0, 0.0, 0.0)
+    call named_window@CV("Undistort", window_auto_size@CV)
+    while image !== null@CV_Image
+	t :@= clone_image@CV(image)
+
+	# Show raw image:
+	call show_image@CV("Raw Video", image)
+
+	# Undistort image:
+	flags :@= inter_linear@CV | warp_fill_outliers@CV
+	call remap@CV(t, image, mapx, mapy, flags, black)
+	call release_image@CV(t)
+
+	# Show corrected image:
+	call show_image@CV("Undistort", image)
+ 
+	# Handle pause/unpause and ESC:
+	c :@= wait_key@CV(15i)
+	if c = integer@('p')
+	    c := 0i
+	    while c != integer@('p') && c != 27i
+		c := wait_key@CV(250i)
+	if c = 27i
+	    break
+	image := query_frame@CV(capture)
+
+
+routine chessboard_generate@Easy_C
+    takes columns Unsigned
+    takes rows Unsigned
+    takes cell_size Double
+    returns_nothing
+
+    # This routine will generate a chessboard pattern for camera
+    # calibration purposes.
+
+    # Generate {base_name}, the name of the file without ".svg" on the end:
+    base_name :@=
+      read_only_copy@(form@("Chessboard_%d%x%d%") % f@(rows) / f@(columns))
+
+    # We want to print out in portrait mode (not landscape mode). If necessary,
+    # swap {rows} and {columns} so that {rows} is greater than {columns}:
+    if columns > rows
+	temporary :@= rows
+	rows := columns
+	columns := temporary
+    call d@(form@("rows=%d% columns=%d%\n\") % f@(rows) / f@(columns))
+    
+    # Open up SVG (Scalable Vector Graphics) file:
+    width :@= double@(columns + 1) * cell_size
+    height :@= double@(rows + 1) * cell_size
+    svg :@= open@SVG(base_name, width, height, 1.0, 1.0, "mm")
+    assert svg !== null@SVG
+    offset :@= cell_size / 2.0
+    svg.x_offset := offset
+    svg.y_offset := offset
+    
+    row :@= 0
+    while row < rows
+	draw :@= (row & 1) != 0
+	y :@= double@(row) * cell_size
+	column :@= 0
+	while column < columns
+	    if draw
+		x :@= double@(column) * cell_size
+		call rectangle@(svg,
+		  x, y, cell_size, cell_size, "black", "black")
+	    draw := !draw
+	    column := column + 1
+	row := row + 1
+
+    # Close {svg} and return:
+    call close@(svg)
+
+
+routine image_show@Extractor
+    takes extractor Extractor
+    takes original_image CV_Image
+    takes show Logical
+    returns_nothing
+
+    # This routinew will show {original_image} on the screen along
+    # with a primitive debugging interface to showing how the debugging
+    # is going.
+
+    debug_image :@= extractor.debug_image
+    extractor.width := original_image.width
+    extractor.height := original_image.height
+
+    # Create the window we need:
+    window_name :@= "Example1"
+    if show
+	call named_window@CV(window_name, window_auto_size@CV)
+
+    # Processing {original_image} with different options
+    # for each time through the loop:
+    debug_index :@= 0
+    previous_debug_index :@= debug_index
+    while 1t
+	# Process {gray_image}; a debug image lands in {debug_image}:
+	call extract@(extractor, original_image, debug_index, 0xffffff00)
+
+	# Display either {original_image} or {debug_image}:
+	if show
+	    if debug_index = 0
+		call show_image@CV(window_name, original_image)
+	    else
+		call show_image@CV(window_name, debug_image)
+
+	# Get a character from the user:
+	control_character :@= character@(0)
+	if show
+	    control_character := character@(wait_key@CV(0i) & 255i)
+
+	# Dispatch on {control_character}:
+	switch control_character
+	  case '\27\'
+	    # Exit program:
+	    break
+	  case '+'
+	    # Increment {debug_index}:
+	    debug_index := debug_index + 1
+	  case '-'
+	    # Decrement {debug_index}:
+	    if debug_index > 0
+		debug_index := debug_index - 1
+	  case '<'
+	    # Set {debug_index} to beginning:
+	    debug_index := 0
+	  case '>'
+	    # Set {debug_index} to end:
+	    debug_index := 100
+	  case 'b'
+	    # Toggle image blur:
+	    extractor.blur := !extractor.blur
+	    call d@(form@("blur = %l%\n\") / f@(extractor.blur))
+	  default
+	    # Deal with unknown {control_character}:
+	    if unsigned@(control_character) <= 127
+		call d@(form@("Unknown control character %v%\n\") /
+		  f@(control_character))
+
+	# Show user {debug_index} if it has changed:
+	if debug_index != previous_debug_index
+	    call d@(form@("****************************debug_index = %d%\n\") /
+	      f@(debug_index))
+	    previous_debug_index := debug_index
+
+    # Release storage:
+    call release_image@CV(original_image)
+    if show
+	call destroy_window@CV(window_name)
+
+
+routine tag_svg_write@Extractor
+    takes extractor Extractor
+    takes tag_id Unsigned
+    takes tag_size Unsigned
+    takes border Logical
+    returns_nothing
+
+    # This routine will write out an SVG file for {tag_id} that is
+    # {tag_size} millimeters square.  {border} specifies whether there
+    # is a black line drawn around the "white" border of the tag.
+
+    assert !border
+
+    cell_width :@= double@(tag_size) / 10.0
+    offset :@= cell_width / 2.0
+    offset := 5.0
+    length :@= 10.0 * cell_width
+    length_plus :@= length + cell_width * 2.0
+
+    # Open the file for writing:
+    base_name :@= read_only_copy@(form@("tag%d%") / f@(tag_id))
+    svg :@= open@SVG(base_name, length + offset, length_plus, 1.0, 1.0, "mm")
+    assert svg !== null@SVG
+    svg.x_offset := offset
+    svg.y_offset := offset
+
+    # Initialize {tag_bytes} to contain 8 bytes of 0:
+    tag_bytes :@= new@Array[Unsigned]()
+    index :@= 0
+    while index < 8
+	call append@(tag_bytes, 0)
+	index := index + 1
+
+    # Place the tag id into the tag id buffer.
+    id :@= tag_id
+    tag_bytes[1] := (id >> 8) & 0xff
+    tag_bytes[0] := id & 0xff
+
+    # Calculate the CRC CCITT portion of the tag id buffer:
+    crc :@= crc@Extractor(extractor, tag_bytes, 2)
+    tag_bytes[3] := (crc >> 8) & 0xff
+    tag_bytes[2] := crc & 0xff
+
+    # Calculate the FEC portion of the tag id buffer:
+    fec :@= extractor.fec
+    call parity@(fec, tag_bytes)
+
+    # Load up {bit_field}:
+    bit_field :@= create@Bit_Field(64)
+    index := 0
+    while index < 16
+	bit_field[index] := (tag_id & (1 << index)) != 0
+	bit_field[index + 16] := (crc & (1 << index)) != 0
+	index := index + 1
+
+    parity :@= (tag_bytes[7] << 24) |
+      (tag_bytes[6] << 16) | (tag_bytes[5] << 8) | tag_bytes[4]
+    index := 0
+    while index < 32
+	bit_field[index + 32] := (parity & (1 << index)) != 0
+	index := index + 1
+
+    # Output all of the bits:
+    index := 0
+    while index < 8
+	call d@(form@("Tag%d%[%d%]:%x%\n\") %
+	  f@(tag_id) % f@(index) / f@(tag_bytes[index]))
+	index := index + 1
+
+    # Set the tag id buffer into the bit fields:
+    #rvBitfield_SetBytes(bit_field, sizeof(tagBytes), tagBytes)
+
+    # Get the bitfield values as an array of bytes:
+    #rvBitfield_GetBits(bit_field,
+    #  sizeof(tagValues), tagValues, rv_bitfield_mapping_north);
+
+    # Print a line border around everything:
+    #if border
+    #	color :@= "black"
+    #	call line@(svg, 0.0, 0.0, length, 0.0, color)
+    #	call line@(svg, 0.0, 0.0, 0.0, length, color)
+    #	call line@(svg, length, 0.0, length, length, color)
+    #	call line@(svg, 0.0, length, length, length, color)
+
+    # Print the bit border:
+    # Lower row:
+    call tag_bits@(svg, cell_width, 1, 1, 9, 1, border)
+    # Right column:
+    call tag_bits@(svg, cell_width, 10, 1, 10, 9, border)
+    # Upper row:
+    call tag_bits@(svg, cell_width, 2, 10, 10, 10, border)
+    # Left column:
+    call tag_bits@(svg, cell_width, 1, 2, 1, 10, border)
+
+    # Print the tag data:
+    index := 0
+    while index < 64
+	if bit_field[index]
+	    call tag_bit@(svg,
+	      cell_width, (index & 7) + 2, (index >> 3) + 2, border)
+	index := index + 1
+
+    # Put some text on the page:
+    tag_name :@= read_only_copy@(form@("%d%") / f@(tag_id))
+    if border
+	call text@(svg, tag_name,
+	  length * 7.0 / 16.0, length_plus - cell_width, "ariel",
+	  unsigned@(cell_width * 3.0))
+    else
+	call text@(svg, tag_name,
+	  length * 7.0 / 16.0, length_plus - cell_width, "ariel",
+	  unsigned@(cell_width * 3.0))
+
+    # Close the file:
+    call close@(svg)

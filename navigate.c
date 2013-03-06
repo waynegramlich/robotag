@@ -1,0 +1,1 @@
+../lpc17xx_cmsis/LPC1700CMSIS/Examples/UART/navigate/navigate.c

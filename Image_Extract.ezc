@@ -1,0 +1,64 @@
+easy_c 1.0
+
+library CV
+library Easy_C
+library Extractor
+library FEC
+library Math
+
+routine main@Easy_C
+    takes arguments Array[String]
+    returns Integer
+
+    # Process arguments:
+    image_names :@= new@Array[String]()
+    size :@= arguments.size
+    if arguments.size < 2
+	call d@("usage: Image_Extract tga_file_list ...\n\")
+    else
+	index :@= 1
+	while index < size
+	    argument :@= arguments[index]
+	    if suffix_match@(".tga", argument)
+		call append@(image_names, argument)
+	    else
+		call d@(form@("%v% is not a .tga file\n\") / f@(argument))
+	    index := index + 1
+
+    # Create data structures:
+    extractor :@= create@Extractor()
+    original_image :@= null@CV_Image
+
+    # Iterate over any {image_names}:
+    size := image_names.size
+    index := 0
+    while index < size
+	image_name :@= image_names[index]
+	original_image := tga_read@(original_image, image_name)
+	if original_image == null@CV_Image
+	    call d@(form@("Unable to read %v%\n\") / f@(image_name))
+	else
+	    call tga_write@(original_image, "foo.tga")
+	    call size_set@(extractor,
+	      original_image.width, original_image.height)
+
+	    tags :@= extract@(extractor, original_image, 0, 0)
+
+	    tags_size :@= tags.size
+	    if tags_size = 0
+		call d@(form@("%v%: nothing\n\") / f@(image_name))
+	    else
+		call d@(form@("%v%:") / f@(image_name))
+		tags_index :@= 0
+		while tags_index < tags_size
+		    tag :@= tags[tags_index]
+		    call d@(form@(" id:%d% bearing:%f%") % f@(tag.id) /
+		      f@(tag.bearing * 180.0 / 3.1415926))
+		    tags_index := tags_index + 1
+		call d@("\n\")
+
+	index := index + 1
+
+    return 0i
+
+

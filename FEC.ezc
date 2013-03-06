@@ -1,0 +1,46 @@
+easy_c 1.0
+
+# This is an Easy-C interface library to the Phil Karns, et. al.
+# Forward Error Correction code library.
+
+library Easy_C
+require FEC_C
+include "FEC_C.h"
+
+# FEC data structures:
+define FEC				# 
+    external
+
+external null@FEC FEC
+
+routine create@FEC
+    takes symbol_size Unsigned
+    takes data_size Unsigned
+    takes parity_size Unsigned
+    returns FEC
+    external FEC__create
+
+    # This routine will create and return a new {FEC} object with a
+    # symbol size of {symbol_size}, data size of {data_size} and a
+    # parity size of {parity_size}.
+
+
+routine parity@FEC
+    takes fec FEC
+    takes data Array[Unsigned]
+    returns_nothing
+    external FEC__parity
+
+    # This routine will compute and the parity information associated
+    # with {data} using {fec} and store the results to {data}.
+    # {data} must be big enough to contain the result.
+
+
+routine correct@FEC
+    takes fec FEC
+    takes data Array[Unsigned]
+    returns Logical
+    external FEC__correct
+
+    # This routine will will take correct any bit errors in {data} using {fec}.
+

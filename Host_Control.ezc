@@ -1,0 +1,1559 @@
+easy_c 1.0
+
+# Copyright (c) 2010-2011 by Wayne C. Gramlich
+# All rights reserved
+
+library Easy_C
+library Map
+library Unix
+library Unix_Dispatch
+
+# "cop" stands for coprocessor on the platform:
+define Position
+    record
+	ceiling_bearing Double		# Ceiling bearing (degrees)
+	ceiling_count Unsigned		# Number of visible fiducials
+	ceiling_id Unsigned		# Id of closest fiducial
+	ceiling_time Unsigned		# Time we processed ceiling record
+	ceiling_x Double		# Computed X ceiling location
+	ceiling_y Double		# Computed Y ceiling location
+	cop_bearing Double		# Platform bearing
+	cop_target_bearing Double	# Platform target bearing
+	cop_target_distance Double	# Platform target distance
+	cop_time Unsigned		# Platform time
+	cop_x Double			# Platform X location
+	cop_y Double			# Platform Y location
+	level Unsigned			# Platform run level
+	state Unsigned			# Platform state
+
+define Globals
+    record
+	brain Unix_Dispatch[Globals]	# Brain "connection"
+	brain_is_connected Logical	# true=>brain connected to host
+	brain_line_original String	# Original value of {brain_line}
+	brain_line String		# One line fromn {brain}
+	brain_listen Unix_Dispatch[Globals] # Brain "listen"
+	command String
+	command_line String
+	constants Constants		# Constants for robot
+	console Unix_Dispatch[Globals]
+	gui Unix_Dispatch[Globals]
+	gui_is_open Logical
+	gui_line String
+	gui_listen Unix_Dispatch[Globals]
+	log_stream Out_Stream		# Stream for logging what happened
+	map Map
+	position Position
+	positions Array[Position]
+	tar Unix_Dispatch[Globals]
+	temporary String
+	upload Unix_Dispatch[Globals]
+	upload_count Unsigned
+	upload_listen Unix_Dispatch[Globals]
+
+define Location				# Location
+    record
+	bearing Float			# Bearing angle in radians
+	tag Unsigned			# Associated tag id (0 for encoders)
+	target_bearing Float		# Bearing to target (encoders only)
+	target_distance Float		# Distance to target (encoders only)
+	timestamp Unsigned		# In microseconds
+	x Float				# X coordinate
+	y Float				# Y coordinate
+
+define SVG
+    record
+	stream Out_Stream		# Output stream
+	height Float			# Height
+	width Float			# Width
+	units String			# Units
+	x_offset Float			# Amount to offset X by
+	x_scale Float			# Amount to scale X by
+	y_offset Float			# Amount to offset Y by
+	y_scale Float			# Amount to scale Y by
+
+define SVG_Point
+    record
+	x Float
+	y Float
+
+
+# Main routine:
+
+routine main@Easy_C
+    takes arguments Array[String]
+    returns Integer
+
+    call d@("Host_Control\n\")
+
+    # Get {globals} and {dispatcher} created:
+    host_address :@= "192.168.1.5"
+    size :@= arguments.size
+    if size >= 2
+	host_address := arguments[1]
+
+    map :@= create@Map()
+    map.tag_updated := tag_updated@Easy_C
+    
+    constants :@=
+      create@Constants(5.0, 80, 32, 8.0, 10, 2, 80.0, 0.0, 0.0, 1.0, -15.0, 0.0,
+      0.0, 80.0, 0.0, 0.0, 0x100, 0x100)
+
+    #call map_read@(map, "tags.xml")
+
+    globals :@= one_and_only@Globals()
+    dispatcher :@= create@Unix_Dispatcher[Globals](globals)
+    globals.brain := closed_allocate@(dispatcher, "brain")
+    globals.brain_is_connected := 0f
+    globals.brain_line := new@String()
+    globals.brain_line_original := new@String()
+    globals.brain_listen := listen_allocate@(dispatcher,
+       "brain_listen", host_address, 5432, 1, brain_connect@Easy_C)
+    globals.command := new@String()
+    globals.command_line := new@String()
+    globals.console :=
+      console_allocate@(dispatcher, "console", console_read@Easy_C)
+    globals.constants := constants
+    globals.gui := closed_allocate@(dispatcher, "gui")
+    globals.gui_is_open := 0f
+    globals.gui_line := new@String()
+    globals.gui_listen := listen_allocate@(dispatcher,
+       "gui_listen", host_address, 6543, 1, gui_connect@Easy_C)
+    globals.log_stream := open@Out_Stream("robot.log")
+    globals.position := new@Position()
+    globals.positions := new@Array[Position]()
+    globals.map := map
+    globals.temporary := new@String()
+    globals.tar := closed_allocate@(dispatcher, "tar")
+    globals.upload := closed_allocate@(dispatcher, "upload")
+    globals.upload_listen := listen_allocate@(dispatcher,
+      "upload_listen", host_address, 4321, 1, upload_connect@Easy_C)
+
+    # Initialize the ceiling_id with a bogus value so that we
+    # know it is bogus:
+    globals.position.ceiling_id := 0xffffffff
+
+    # Read in the information from the "robot.xml" file:
+    call xml_read@(globals, "robot.xml")
+
+    # Enter dispatch loop to execute program:
+    call dispatch_loop@(dispatcher)
+
+    return 0i
+
+
+routine non_block@Easy_C
+    takes socket Integer
+    returns_nothing
+
+    # This routine will force {socket} into non-blocking mode.
+
+    flags :@= file_control@Unix(socket, unix_file_f_getfl@Integer, 0i)
+    call d@(form@("flags=%x%\n\") / f@(flags))
+    if flags < 0i
+	error_number :@= errno@Unix()
+	call d@(form@("Error=%d% (%v%)\n\") %
+	  f@(error_number) / f@(errno_convert@Unix(null@String, error_number)))
+    flags := flags | integer@(unix_file_o_nonblock@Unsigned)
+    result :@= file_control@Unix(socket, unix_file_f_setfl@Integer, flags)
+    assert result >= 0i
+
+
+routine brain_connect@Easy_C
+    takes brain_listen Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine is invoked whenever there is a client connect occurs
+    # via {brain_listen}.
+
+    call d@("Accepted connection from brain.\n\")
+
+    # Extract {brain} and {map} from {globals}:
+    globals :@= brain_listen.globals
+    brain :@= globals.brain
+    map :@= globals.map
+    constants :@= globals.constants
+
+    # Establish a stream connaction to {brain}:
+    call accept@(brain_listen, brain, brain_read@Easy_C)
+    globals.brain_is_connected := 1t
+
+    # Send {map} to {brain}:
+    call send@(map, brain, "brain_connect@Easy_C")
+    call send@(constants, brain)
+
+
+routine brain_read@Easy_C
+    takes brain Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine is invoked whenever there is a data from {brain}.
+
+    globals :@= brain.globals
+    map :@= globals.map
+    pi :@= map.pi
+
+    input_buffer :@= brain.input_buffer
+    size :@= input_buffer.size
+    if size = 0
+	# We lost the connection to {brain}.
+	call d@("Lost connection to brain.\n\")
+	call close@(brain)
+	globals.brain_is_connected := 0f
+    else
+	# Just dump {input_buffer} to the console:
+	brain_line :@= globals.brain_line
+	brain_line_original :@= globals.brain_line_original
+	index :@= 0
+	while index < size
+	    character :@= input_buffer[index]
+	    switch character
+	      default
+		# Any non CRLF gets appended to brain_line:
+		call character_append@(brain_line, character)
+		call character_append@(brain_line_original, character)
+	      case '\r\'
+		# Throw carriage returns away:
+		do_nothing
+	      case '\n\'
+		# We have a full line from the brain:
+		assert equal@(brain_line, brain_line_original)
+		#call d@(form@("H:B2H:brain_line=%v%\n\") / f@(brain_line))
+
+		# All formatted trace data from brain starts with "@{letter}":
+		if brain_line.size > 2 && brain_line[0] = '@'
+		    # We have a logging recored "@{char} ....":
+
+		    # Grab some values from {globals}:
+		    log_stream :@= globals.log_stream
+		    position :@= globals.position
+
+		    # Remove "@{char}":
+		    call lop@(brain_line)
+		    character := lop@(brain_line)
+
+		    # Dispatch on {character}:
+		    switch character
+		      case 'B'
+			# Brain command: 'B {time} "{command}"':
+			time :@= unsigned_lop@(brain_line)
+			command :@= string_lop@(brain_line, null@String, "@B")
+
+			# Log to {log_stream}:
+			call put@(form@("Z %d% %v%\n\") %
+			  f@(time) / f@(command), log_stream)
+		      case 'C'
+			# Ceiling record:
+			# '@C {time} {id} {x} {y} {bearing} {count} <repeat>':
+			ceiling_time :@= unsigned_lop@(brain_line)
+			closest_ceiling_id :@= unsigned_lop@(brain_line)
+			closest_ceiling_x :@= double_lop@(brain_line)
+			closest_ceiling_y :@= double_lop@(brain_line)
+			closest_ceiling_bearing :@= double_lop@(brain_line)
+			ceiling_count :@= unsigned_lop@(brain_line)
+
+			temporary :@= globals.temporary
+			call trim@(temporary, 0)
+
+			call string_append@(temporary,
+			  form@("%d% %2f% %2f% %2f% %d%") %
+			  f@(closest_ceiling_id) %
+			  f@(closest_ceiling_x) % f@(closest_ceiling_y) %
+			  f@(closest_ceiling_bearing) / f@(ceiling_count))
+
+			ceiling_index :@= 0
+			while ceiling_index < ceiling_count
+			    ceiling_id :@= unsigned_lop@(brain_line)
+			    ceiling_x :@= double_lop@(brain_line)
+			    ceiling_y :@= double_lop@(brain_line)
+			    ceiling_bearing :@= double_lop@(brain_line)
+			    
+			    call string_append@(temporary,
+			      form@(" %d% %2f% %2f% %2f") % f@(ceiling_id) %
+			      f@(ceiling_x) % f@(ceiling_y) /
+			      f@(ceiling_bearing))
+
+			    ceiling_index := ceiling_index + 1
+
+			# Log the information:
+			call put@(form@("C %d% %s%\n\") %
+			  f@(ceiling_time) / f@(temporary), log_stream)
+			#call d@(form@("H:B2H:ceil %d% %s%\n\") %
+			#  f@(ceiling_time) / f@(temporary))
+
+			if closest_ceiling_id > 0 &&
+			  closest_ceiling_id <= 0xffff
+			    # Stuff the data into {position}:
+			    position.ceiling_time := ceiling_time
+			    position.ceiling_x := closest_ceiling_x
+			    position.ceiling_y := closest_ceiling_y
+			    position.ceiling_bearing :=
+			      closest_ceiling_bearing * pi / 180.0
+			    position.ceiling_id := closest_ceiling_id
+			    position.ceiling_count := 0
+
+			    if globals.gui_is_open
+				call write@(globals.gui,
+				  form@("camera %s%\n\") / f@(temporary))
+				#call d@(form@("H:H2G:camera %s%\n\") /
+				#  f@(temporary))
+		      case 'D'
+			# Destination:
+			time :@= unsigned_lop@(brain_line)
+			target_x :@= double_lop@(brain_line)
+			target_y :@= double_lop@(brain_line)
+			target_direction :@= unsigned_lop@(brain_line)
+			way_name :@=
+			  string_lop@(brain_line, null@String, "@D way name")
+			target_name :@=
+			  string_lop@(brain_line, null@String, "@D targ name")
+			from :@=
+			  string_lop@(brain_line, null@String, "@D targ name")
+
+			# Log the record:
+			call put@(form@("D %d% %2f% %2f% %d% %v% %v% %v%\n\") %
+			  f@(time) % f@(target_x) % f@(target_y) %
+			  f@(target_direction) % f@(way_name) %
+			  f@(target_name) / f@(from), log_stream)
+		      case 'G'
+			# Gripper "@G {l_pos} {r_pos} {l_targ} {r_targ} ...
+			# ... {l_force} {r_force} {l_limit} {limit} {flag}":
+			time :@= unsigned_lop@(brain_line)
+			left_position :@= unsigned_lop@(brain_line)
+			right_position :@= unsigned_lop@(brain_line)
+			left_target :@= unsigned_lop@(brain_line)
+			right_target :@= unsigned_lop@(brain_line)
+			left_force :@= unsigned_lop@(brain_line)
+			right_force :@= unsigned_lop@(brain_line)
+			left_limit :@= unsigned_lop@(brain_line)
+			right_limit :@= unsigned_lop@(brain_line)
+			flag :@= unsigned_lop@(brain_line)
+
+			call put@(form@(
+			  "Q %d%  %d% %d%  %d% %d%  %d% %d%  %d% %d%  %d%\n\") %
+			  f@(time) %
+			  f@(left_position) % f@(right_position) %
+			  f@(left_target) % f@(right_target) %
+			  f@(left_force) % f@(right_force) %
+			  f@(left_limit) % f@(right_limit) / f@(flag),
+			  log_stream)
+		      case 'L'
+			# Encoders (dead reckoning) information:
+			# ("@L time x y bearing tbearing tdistance en md lbl"):
+			encoders_time :@= unsigned_lop@(brain_line)
+			encoders_x :@= double_lop@(brain_line)
+			encoders_y :@= double_lop@(brain_line)
+			encoders_bearing :@= double_lop@(brain_line)
+			encoders_target_bearing :@= double_lop@(brain_line)
+			encoders_target_distance :@= double_lop@(brain_line)
+			encoders_enable :@= unsigned_lop@(brain_line)
+			encoders_mode :@= unsigned_lop@(brain_line)
+			encoders_label :@= unsigned_lop@(brain_line)
+			debug_speed :@= integer_lop@(brain_line)
+			debug_twist :@= integer_lop@(brain_line)
+			debug_lift_grip_mode :@= unsigned_lop@(brain_line)
+			debug_lifter_height :@= unsigned_lop@(brain_line)
+			debug_motor_left :@= integer_lop@(brain_line)
+			debug_motor_right :@= integer_lop@(brain_line)
+			debug_grip_left_position :@= integer_lop@(brain_line)
+			debug_grip_right_position :@= integer_lop@(brain_line)
+			debug_grip_left_force :@= integer_lop@(brain_line)
+			debug_grip_right_force :@= integer_lop@(brain_line)
+			debug_done_flags :@= integer_lop@(brain_line)
+
+			bearing_error :@= 
+			  encoders_bearing - encoders_target_bearing
+			if bearing_error > 180.0
+			    bearing_error := bearing_error - 180.0
+			else_if bearing_error < -180.0
+			    bearing_error := bearing_error + 180.0
+
+			# Log the record:
+			call put@(form@(
+			  "L %d% X:%2f% Y:%2f% B:%2f% TB:%2f% TD:%2f% En:%d% Md:%d% L:%d% S:%d% T:%d% GM:%d% H:%d% L:%d% R:%d% LP:%d% RP:%D% LF:%d% RF:%d% BE:%2f% GF:%x%\n\") %
+			  f@(encoders_time) % f@(encoders_x) % f@(encoders_y) %
+			  f@(encoders_bearing) % f@(encoders_target_bearing) %
+			  f@(encoders_target_distance) %
+			  f@(encoders_enable) % f@(encoders_mode) %
+			  f@(encoders_label) % f@(debug_speed) %
+			  f@(debug_twist) % f@(debug_lift_grip_mode) %
+			  f@(debug_lifter_height) % f@(debug_motor_left) %
+			  f@(debug_motor_right) %
+			  f@(debug_grip_left_position) %
+			  f@(debug_grip_right_position) %
+			  f@(debug_grip_left_force) %
+			  f@(debug_grip_right_force) %
+			  f@(bearing_error) /
+			  f@(debug_done_flags),
+			  log_stream)
+
+			# Load encoder values into {position}:
+			position.cop_time := encoders_time
+			position.cop_x := encoders_x
+			position.cop_y := encoders_y
+			position.cop_bearing := encoders_bearing * pi / 180.0
+			position.cop_target_bearing :=
+			  encoders_target_bearing * pi / 180.0
+			position.cop_target_distance := encoders_target_distance
+
+			# Let the {gui} know what is happening:
+			if globals.gui_is_open
+			    call write@(globals.gui, form@(
+			      "encoders %2f% %2f% %2f% %2f% %2f%\n\") %
+			      f@(encoders_x) % f@(encoders_y) %
+			      f@(encoders_bearing) %
+			      f@(encoders_target_bearing) /
+			      f@(encoders_target_distance))
+			    #call d@(form@(
+			    #  "H:H2G:encoders %2f% %2f% %2f% %2f% %2f%\n\") %
+			    #  f@(encoders_x) % f@(encoders_y) %
+			    #  f@(encoders_bearing) %
+			    #  f@(encoders_target_bearing) /
+			    #  f@(encoders_target_distance))
+		      case 'N'
+			# Neighbor {oid} {tid} {tangle} {tbear} {tdist} {good}:
+			origin_id :@= unsigned_lop@(brain_line)
+			target_id :@= unsigned_lop@(brain_line)
+			target_angle :@= double_lop@(brain_line) * pi / 180.0
+			target_bearing :@= double_lop@(brain_line) * pi / 180.0
+			target_distance :@= double_lop@(brain_line)
+			goodness_metric :@= double_lop@(brain_line)
+
+			# Log the neighbor record:
+			call put@(form@("N %d% %d% %2f% %2f% %2f% %2f%\n\") %
+			  f@(origin_id) % f@(target_id) % f@(target_angle) %
+			  f@(target_bearing) % f@(target_distance) /
+			  f@(goodness_metric), log_stream)
+
+			#call d@(form@(
+			#  "H:B2H:N %d% %d% %2f% %2f% %2f% %2f%\n\") %
+			#  f@(origin_id) % f@(target_id) % f@(target_angle) %
+			#  f@(target_bearing) % f@(target_distance) /
+			#  f@(goodness_metric))
+
+			# Process the neighbor record:
+			origin_tag :@=
+			  tag_lookup@(map, origin_id, "brain_read@Easy_C N1")
+			target_tag :@=
+			  tag_lookup@(map, target_id, "brain_read@Easy_C N2")
+			if neighbor_exists@(origin_tag, target_tag)
+			    neighbor :@=
+			      neighbor_lookup@(origin_tag, target_tag,
+			      "Ho:brain_read@Easy_C N")
+			    call update@(neighbor, goodness_metric,
+			      target_angle, target_bearing, target_distance)
+			else
+			    neighbor :@= create@Tag_Neighbor(origin_tag,
+			      target_tag, target_angle, target_bearing,
+			      target_distance, goodness_metric, 0xffffff00)
+		      case 'P'
+			time :@= unsigned_lop@(brain_line)
+			label :@= string_lop@(brain_line, null@String, "@P1")
+			path_size :@= unsigned_lop@(brain_line)
+			#call d@(form@("Br2Ho: %v% original @P\n\") /
+			#  f@(brain_line_original))
+			call put@(form@("P %d% %v% %d%") %
+			  f@(time) % f@(label) / f@(path_size), log_stream)
+			path_index :@= 0
+			while path_index < path_size
+			    path_way :@=
+			      string_lop@(brain_line, null@String, "@P2")
+			    call put@(form@(" %v%") / f@(path_way), log_stream)
+			    path_index := path_index + 1
+			call put@("\n\", log_stream)
+		      case 'R'
+			time :@= unsigned_lop@(brain_line)
+			lift_low :@= unsigned_lop@(brain_line)
+			lift_high :@= unsigned_lop@(brain_line)
+			grip_left_position :@= unsigned_lop@(brain_line)
+			grip_right_position :@= unsigned_lop@(brain_line)
+			grip_left_limit :@= unsigned_lop@(brain_line)
+			grip_right_limit :@= unsigned_lop@(brain_line)
+			mode :@= unsigned_lop@(brain_line)
+
+			call put@(form@(
+			  "R %d%  %d% %d%  %d% %d%  %d% %d%  %d%\n\") %
+			  f@(time) % f@(lift_low) % f@(lift_high) %
+			  f@(grip_left_position) % f@(grip_right_position) %
+			  f@(grip_left_limit) % f@(grip_right_limit) /
+			  f@(mode), log_stream)
+		      case 'S'
+			# We have a state record ("@S state level why")
+			time :@= unsigned_lop@(brain_line)
+			state :@= unsigned_lop@(brain_line)
+			level :@= unsigned_lop@(brain_line)
+			why :@= string_lop@(brain_line, null@String, "Ho:S")
+
+			# Log the record:
+			call put@(form@("S %d% %d% %d% %v%\n\") % f@(time) %
+			  f@(state) % f@(level) / f@(why), log_stream)
+
+			# Load the state into {position}:
+			globals.position.state := unsigned_lop@(brain_line)
+			globals.position.level := unsigned_lop@(brain_line)
+		      case 'T'
+			# We have a tag record:
+			id :@= unsigned_lop@(brain_line)
+			x :@= double_lop@(brain_line)
+			y :@= double_lop@(brain_line)
+			angle :@= double_lop@(brain_line) * pi / 180.0
+			edge_length :@= double_lop@(brain_line)
+
+			# Log the record:
+			call put@(form@("T %d% %2f% %2f% %2f% %4f%\n\") %
+			  f@(id) % f@(x) % f@(y) % f@(angle) / f@(edge_length),
+			  log_stream)
+			#call d@(form@("H:B2H:T %d% %2f% %2f% %2f% %4f%\n\") %
+			#  f@(id) % f@(x) % f@(y) % f@(angle) / f@(edge_length))
+
+			# Process the record:
+			if tag_exists@(map, id)
+			    tag :@=
+			      tag_lookup@(map, id, "brain_read@Easy_C T")
+			    call update@(tag, x, y, angle, edge_length,
+			      "brain_read", 0xffffff00)
+			else
+			    tag :@=
+			      tag_create@(map, id, x, y, angle, edge_length,
+			      "brain_read@Easy_C T create")
+		      case 'V'
+			# @V {time} "{label}" {size} "{way0}" ... "{wayN}":
+			time :@= unsigned_lop@(brain_line)
+			label :@= string_lop@(brain_line, null@String, "@V1")
+			visits_size :@= unsigned_lop@(brain_line)
+			call put@(form@("V %d% %v% %d%") %
+			  f@(time) % f@(label) / f@(visits_size), log_stream)
+			visits_index :@= 0
+			while visits_index < visits_size
+			    visit_way :@=
+			      string_lop@(brain_line, null@String, "@V2")
+			    call put@(form@(" %v%") / f@(visit_way), log_stream)
+			    visits_index := visits_index + 1
+			call put@("\n\", log_stream)
+
+		    # FIXME: Is this stuff used anymore!!!
+		    # Output the data in comparison format:
+		    character := '<'
+		    if position.cop_time > position.ceiling_time
+			character := '>'
+		    #call write@(globals.console, form@(
+		    #  "t:%d%%c%%d%\t\x:%d%:%d%\t\y:%d%:%d%\t\b:%d%:%d%\t\%d%:%d%\t\%d%:%d%\n\") %
+		    #  f@(position.cop_time) % f@(character) %
+		    #  f@(position.ceiling_time) %
+		    #  f@(position.cop_x) % f@(position.ceiling_x) %
+		    #  f@(position.cop_y) % f@(position.ceiling_y) %
+		    #  f@(position.cop_bearing) %
+		    #  f@(position.ceiling_bearing) %
+		    #  f@(position.state) % f@(position.level) %
+		    #  f@(position.ceiling_id) / f@(position.ceiling_count))
+
+		    # Keep a record of the data for post analysis:
+		    #call append@(globals.positions, copy@(position))
+
+		    # Extra "left over" from a formatted line should not happen:
+		    if brain_line.size != 0
+			# It happened, so print something out:
+			call d@(form@("Br2Ho: %v% left over %v%\n\") %
+			  f@(brain_line_original) / f@(brain_line))
+		    else
+			# Successfully processed {brain_line}:
+			#call d@(form@("Bf2Ho: %v% processed\n\") /
+			#  f@(brain_line_original))
+		else
+		    # We have an unformatted line:
+		    call d@(form@("Br2Ho: %v% unformatted\n\") /
+		      f@(brain_line))
+
+		# Make sure {brain_line} is empty for next line:
+		call trim@(brain_line, 0)
+		call trim@(brain_line_original, 0)
+	    index := index + 1
+	
+	#call write@(globals.console, input_buffer)
+	call trim@(input_buffer, 0)
+
+
+routine console_read@Easy_C
+    takes console Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine is invoked whenever there is console input available.
+
+    input_buffer :@= console.input_buffer
+    globals :@= console.globals
+    command :@= globals.command
+    command_line :@= globals.command_line
+
+    #call d@(form@("Got %v% from console\n\") / f@(input_buffer))
+    size :@= input_buffer.size
+    index :@= 0
+    while index < size
+	character :@= input_buffer[index]
+	call character_append@(command_line, character)
+	if character = '\n'
+	    # Read {command} from {buffer}:
+	    call white_space_lop@(command_line, null@String)
+	    call word_lop@(command_line, command)
+	    call white_space_lop@(command_line, null@String)
+	    call lower_case@(command)
+
+	    call d@(form@("command=%v%\n\") / f@(command))
+
+	    # Dispatch on {command}:
+	    forward :@= 0f
+	    if partial_match@(command, "brain") >= 1
+		# brain {command}:
+		call write@(globals.brain, command_line)
+	    else_if partial_match@(command, "camera") >= 1
+		# coprocessor {command}:
+		forward := 1t
+	    else_if partial_match@(command, "coprocessor") >= 1
+		# coprocessor {command}:
+		forward := 1t
+	    else_if partial_match@(command, "goto") >= 2
+		# goto {label}:
+		forward := 1t
+	    else_if partial_match@(command, "gui") >= 2
+		# gui {label}:
+		call write@(globals.gui, command_line)
+	    else_if partial_match@(command, "dump {base_name}") >= 1
+		# dump {base_name}:
+		call trim@(command_line, command_line.size - 1)
+		call dump@Easy_C(globals.positions, command_line)
+	    else_if partial_match@(command, "halt") >= 1
+		# halt:
+		forward := 1t
+	    else_if partial_match@(command, "location") >= 3
+		# location:
+		forward := 1t
+	    else_if partial_match@(command, "log") >= 3
+		# location:
+		call trim@(command_line, command_line.size - 1)
+		call close@(globals.log_stream)
+		call rename@Unix("robot.log", command_line)
+		globals.log_stream := open@Out_Stream("robot.log")
+	    else_if partial_match@(command, "plot") >= 2
+		# plot {base_name}:
+		call trim@(command_line, command_line.size - 1)
+		call d@("Calling plot\n\")
+		call plot@Easy_C(command_line)
+	    else_if partial_match@(command, "position") >= 2
+		# position {x} {y} {bearing}:
+		forward := 1t
+	    else_if partial_match@(command, "quit") >= 1
+		call close@(globals.log_stream)
+		call exit@System(0)
+	    else_if partial_match@(command, "show") >= 1
+		call show@(globals.map)
+	    else_if partial_match@(command, "target") >= 1
+		# target {x} {y}
+		forward := 1t
+	    else
+		call d@(form@("Unrecognized_command %v%\n\") / f@(command))
+
+	    if forward
+		# Just forward the whole command:
+		#call d@(form@("send '%s% %s%' to brain\n\") %
+		#  f@(command) / f@(command_line))
+		call write@(globals.brain, form@("%s% %s%") %
+		  f@(command) / f@(command_line))
+
+	    call trim@(command_line, 0)
+	index := index + 1
+
+
+routine gui_connect@Easy_C
+    takes gui_listen Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine is invoked whenever there is a client connect occurs
+    # via {gui_listen}.
+
+    call d@("Accepted connection from gui.\n\")
+
+    # Extract some values from {gobals}:
+    globals :@= gui_listen.globals
+    map :@= globals.map
+    gui :@= globals.gui
+    constants :@= globals.constants
+
+    # Make the connection to {gui} and bind {gui_read@Easy_C} as
+    # the routine to deal with input from {gui}.  Remember that
+    # {gui_is_open}.
+    call accept@(gui_listen, gui, gui_read@Easy_C)
+    globals.gui_is_open := 1t
+
+    # Now send {map} to {gui}:
+    call send@(map, gui, "gui_connect@Easy_C")
+
+    # Now send {constants} to {gui}:
+    call send@(constants, gui)
+
+
+routine gui_read@Easy_C
+    takes gui Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine will take some data from {gui} and process it.
+
+    # See if we got any data:
+    globals :@= gui.globals
+    map :@= globals.map
+    pi :@= map.pi
+    log_stream :@= globals.log_stream
+    input_buffer :@= gui.input_buffer
+    size :@= input_buffer.size
+    if size = 0
+	# No data means, we lost the connection to {gui}:
+	call d@("Lost connection to gui.\n\")
+	call close@(gui)
+	globals.gui_is_open := 0f
+    else
+	# Read data from {input_buffer} into {gui_line}:
+	gui_line :@= globals.gui_line
+	index :@= 0
+	while index < size
+	    # Transfer one character:
+	    character :@= input_buffer[index]
+	    switch character
+	      default
+		call character_append@(gui_line, character)
+	      case '\r\'
+		do_nothing
+	      case '\n\'
+		# If we have a new line, it is time to process the line:
+		call d@(form@("Gui:gui_line=%v%\n\") / f@(gui_line))
+		call put@(form@("G %v%\n\") / f@(gui_line), log_stream)
+		command :@= lop@(gui_line)
+		switch command
+		  case 'C'
+		    # C {bear_lim} {speed_lim} {stall} {tar_lim} {twist_lim} ...
+		    # {pid_p} {pid_i} {pid_d} {camera_dx} {camera_dy} ...
+		    # {camera_twist} {grip_p} {grip_i} {grip_d} ...
+		    # {left_force} {right_force}:
+		    bearing_limit :@= double_lop@(gui_line) * pi / 180.0
+		    speed_limit :@= unsigned_lop@(gui_line)
+		    stall :@= unsigned_lop@(gui_line)
+		    target_limit :@= double_lop@(gui_line)
+		    twist_limit :@= unsigned_lop@(gui_line)
+		    ramp :@= unsigned_lop@(gui_line)
+		    pid_p :@= double_lop@(gui_line)
+		    pid_i :@= double_lop@(gui_line)
+		    pid_d :@= double_lop@(gui_line)
+		    linear :@= double_lop@(gui_line)
+		    camera_dx :@= double_lop@(gui_line)
+		    camera_dy :@= double_lop@(gui_line)
+		    camera_twist :@= double_lop@(gui_line) * pi / 180.0
+		    grip_p :@= double_lop@(gui_line)
+		    grip_i :@= double_lop@(gui_line)
+		    grip_d :@= double_lop@(gui_line)
+		    left_force :@= unsigned_lop@(gui_line)
+		    right_force :@= unsigned_lop@(gui_line)
+
+		    # Load all the data into {constants}:
+		    constants :@= create@Constants(bearing_limit,
+		      speed_limit, stall, target_limit, twist_limit, ramp,
+		      pid_p, pid_i, pid_d, linear, camera_dx, camera_dy,
+		      camera_twist, grip_p, grip_i, grip_d,
+		      left_force, right_force)
+		    globals.constants := constants
+
+		    # Ship it down to {brain} if we are connected:
+		    brain :@= globals.brain
+		    if globals.brain_is_connected
+			call send@(constants, brain)
+		  case 'D'
+		    # D {tag_id} {way_id} ; Delete a {Way}:
+		    way :@= way_delete_parse@(map, gui_line)
+		    #call d@(form@("[D]elete way t=%d% w=%d%\n\") %
+		    #  f@(way.tag.id) / f@(way.id))
+		    if globals.brain_is_connected
+			call write@(globals.brain,
+			  form@("delete_way %d% %d%\n\") %
+			  f@(way.tag.id) / f@(way.id))
+			#call d@(form@("H2B:way_delete %d% %d%\n\") %
+			#  f@(way.tag.id) / f@(way.id))
+		  case 'E'
+		    # E {1/0} ; turn camera eye on/off:
+		    camera_on :@= unsigned_lop@(gui_line)
+		    if globals.brain_is_connected
+			call write@(globals.brain,	
+			form@("camera %d%\n\") / f@(camera_on))
+		  case 'G'
+		    # G	{tag_name} ; Go to {tag_name}:
+		    way_name :@= string_lop@(gui_line, null@String, "Ho:G")
+		    if globals.brain_is_connected
+			call write@(globals.brain,
+			  form@("goto %v%\n\") / f@(way_name))
+			call d@(form@("H2B:goto %v%\n\") / f@(way_name))
+		  case 'H'
+		    # H ; Halt the robot
+		    if globals.brain_is_connected
+			call write@(globals.brain, "halt\n\")
+			call d@("H2B:halt\n\")
+		  case 'M'
+		    # M {grab_way_name} {release_way_name}
+		    # move object
+		    null :@= null@String
+		    grab_way_name :@=
+		      string_lop@(gui_line, null@String, "move: grab")
+		    release_way_name :@=
+		      string_lop@(gui_line, null@String, "move: release")
+		    if globals.brain_is_connected
+			call write@(globals.brain,
+			  form@("move %v% %v%\n\") %
+			  f@(grab_way_name) / f@(release_way_name))
+		    call d@(form@("Ho2Br:Move %v% %v%\n\") %
+		      f@(grab_way_name) / f@(release_way_name))
+		  case 'R'
+		    # R {tag1_id} {way_id1} {tag_id2} {way_id2} ; remove seg:
+		    call segment_delete_parse@(map, gui_line)
+		    #call d@("[R]emove Segment\n\")
+		    if globals.brain_is_connected
+			call write@(globals.brain,
+			  form@("delete_segment %d% %d% %d% %d%\n\") %
+			  f@(map.segment_way1_tag_id) %
+			  f@(map.segment_way1_id) %
+			  f@(map.segment_way2_tag_id) /
+			  f@(map.segment_way2_id))
+			#call d@(form@(
+			#  "H2B:delete_segment %d% %d% %d% %d%\n\") %
+			#  f@(map.segment_way1_tag_id) %
+			#  f@(map.segment_way1_id) %
+			#  f@(map.segment_way2_tag_id) /
+			#  f@(map.segment_way2_id))
+		  case 'S'
+		    # S {tag1_id} {way_id1} {tag_id2} {way_id2} ; create seg:
+		    call segment_create_parse@(map, gui_line, 0xffffff00)
+		    if globals.brain_is_connected
+			call write@(globals.brain,
+			  form@("segment %d% %d% %d% %d%\n\") %
+			  f@(map.segment_way1_tag_id) %
+			  f@(map.segment_way1_id) %
+			  f@(map.segment_way2_tag_id) /
+			  f@(map.segment_way2_id))
+			#call d@(form@("segment %d% %d% %d% %d%\n\") %
+			#  f@(map.segment_way1_tag_id) %
+			#  f@(map.segment_way1_id) %
+			#  f@(map.segment_way2_tag_id) /
+			#  f@(map.segment_way2_id))
+		  case 'T'
+		    # T {id} {x} {y} {bearing} {edge_length}:
+		    id :@= unsigned_lop@(gui_line)
+		    x :@= double_lop@(gui_line)
+		    y :@= double_lop@(gui_line)
+		    angle :@= double_lop@(gui_line) * map.pi / 180.0
+		    edge_length :@= double_lop@(gui_line)
+		    call d@(form@("T %d% %2f% %2f% %2f% %2f%\n\") %
+		      f@(id) % f@(x) % f@(y) % f@(angle * 180.0 / map.pi) /
+		      f@(edge_length))
+		    assert edge_length > 0.0
+		    tag :@= tag_lookup@(map, id, "GUI: T")
+		    tag.edge_length := edge_length
+
+		    if globals.brain_is_connected
+			call write@(globals.brain,
+			  form@("tag %d% %2f% %2f% %2f% %2f%\n\") %
+			  f@(id) % f@(x) % f@(y) %
+			  f@(angle * 180.0 / map.pi) / f@(edge_length))
+			call d@(
+			  form@("H2B:tag %d% %2f% %2f% %2f% %2f%\n\") %
+			  f@(id) % f@(x) % f@(y) %
+			  f@(angle * 180.0 / map.pi) / f@(edge_length))
+		  case 'W'
+		    # W {tag_id} {way_id} {dx} {dy} {angle} ; create a {Way}:
+		    way :@= way_create_parse@(map, gui_line)
+		    if globals.brain_is_connected
+			call write@(globals.brain, form@(
+			  "way %d% %d% %2f% %2f% %2f% %v% %2f% %2f% %2f% %v%\n\") %
+			  f@(way.tag.id) % f@(way.id) %
+			  f@(way.dx) % f@(way.dy) %
+			  f@(way.angle * map.pi / 180.0) % f@(way.name) %
+			  f@(way.height) % f@(way.open_width) %
+			  f@(way.close_width) / f@(way.flags))
+			#call d@(form@("H2B:way %d% %d% %2f% %2f% %2f%\n\") %
+			#  f@(way.tag.id) % f@(way.id) %
+			#  f@(way.dx) % f@(way.dy) %
+			#  f@(way.angle * map.pi / 180.0) / f@(way.name))
+		  case 'V'
+		    # V   Save tags file:
+		    xml_stream :@= open@Out_Stream("robot.xml")
+		    call put@("<Robot>\n\", xml_stream)
+		    call xml_write@(globals.constants, 1, xml_stream)
+		    call xml_write@(globals.map, 1, xml_stream)
+		    call put@("</Robot>\n\", xml_stream)
+		    call close@(xml_stream)
+		    call d@("robot.xml file written\n\")
+		  case 'X'
+		    # X {open_clode}  Cause gripper to open/close:
+		    open_close :@= unsigned_lop@(gui_line)
+		    if globals.brain_is_connected
+			call write@(globals.brain,
+			  form@("grab %d%\n\") / f@(open_close))
+		  case 'Y'
+		    value :@= unsigned_lop@(gui_line)
+		    if globals.brain_is_connected
+			call write@(globals.brain,
+			  form@("synch %d%\n\") / f@(value))
+			call d@(form@("Ho2Br:sync %d%\n\") / f@(value))
+		  case 'Z'
+		    # Z {x} {y} ; Zoom to ({x}, {y}) location:
+		    target_x :@= double_lop@(gui_line)
+		    target_y :@= double_lop@(gui_line)
+		    call d@(form@("Zoom %f% %f%\n\") %
+		      f@(target_x) / f@(target_y))
+		    if globals.brain_is_connected
+			call write@(globals.brain, form@("zoom %2f% %2f%\n\") %
+			  f@(target_x) / f@(target_y))
+			call d@(form@("H2B:zoom %2f% %2f%\n\") %
+			  f@(target_x) / f@(target_y))
+		  default
+		    call d@(form@("Illegal GUI command:%v%\n\") / f@(command))
+		    assert 0f
+
+		# Clear out {gui_line}:
+		if gui_line.size != 0
+		    call d@(form@("Left over GUI line: %v%\n\") / f@(gui_line))
+		call trim@(gui_line, 0)
+    	    index := index + 1
+
+
+routine tar_read@Easy_C
+    takes tar Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine will take some data from {tar} and send it to
+    # the upload connection.
+
+    globals :@= tar.globals
+    upload :@= globals.upload
+
+    input_buffer :@= tar.input_buffer
+    size :@= input_buffer.size
+
+    #call d@(form@("tar_read@EasyC(): size=%d%\n\") / f@(size))
+
+    if size = 0
+	call close@(tar)
+	call auto_close@(upload)
+	call d@(form@("Uploaded %d% bytes\n\") / f@(globals.upload_count))
+    else
+	call write@(upload, input_buffer)
+	globals.upload_count := globals.upload_count + size
+
+
+routine upload_connect@Easy_C
+    takes upload_listen Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine is invoked whenever whenever a connection to port
+    # 4321 occurs.  This routine performs the accept(2) call and starts
+    # the .tar file transfer.
+
+    globals :@= upload_listen.globals
+    upload :@= globals.upload
+    globals.upload_count := 0
+
+    tar_file_name :@= "/home/wayne/public_html/projects/robotag/iConnect.tar"
+    if open_read@(globals.tar, tar_file_name, tar_read@Easy_C)
+	call d@(form@("Could not open %v% for reading\n\") / f@(tar_file_name))
+	call exit@System(1)
+
+    call accept@(upload_listen, upload, fail_routine@Unix_Dispatch[Globals])
+    call d@("Upload connection accepted\n\")
+
+
+routine dump@Easy_C
+    takes positions Array[Position]
+    takes base_name String
+    returns_nothing
+
+    # This routine will dump out {globals.positions}.
+
+    out_file_name :@= read_only_copy@(form@("%s%.lst") / f@(base_name))
+    out_stream :@= open@Out_Stream(out_file_name)
+    if out_stream == null@Out_Stream
+	call d@(form@("Could not open %v% for writing\n\") / f@(out_file_name))
+	call exit@System(1)
+
+    # Output a header:
+    size :@= positions.size
+    #call put@(form@("%d%") / f@(size), out_stream)
+
+    index :@= 0
+    while index < size
+	position :@= positions[index]
+	call put@(position, out_stream)
+	index := index + 1
+
+    call close@(out_stream)
+
+
+routine tag_updated@Easy_C
+    takes tag Tag
+    takes from String
+    returns_nothing
+
+    # This routine is called whenever {tag} is changed.
+
+    globals :@= one_and_only@Globals()
+    gui :@= globals.gui
+    map :@= globals.map
+    pi :@= map.pi
+    if globals.gui_is_open
+	if tag.bearing > 100000.0 || tag.x > 100000.0 || tag.y > 100000.0
+	    call d@(form@("tag_updated@Easy_C(%d%, %v%)\n\") %
+	      f@(tag.id) / f@(from))
+	    call d@("**************************************************\n\")
+	temporary :@= globals.temporary
+	call trim@(temporary, 0)
+	call string_append@(temporary,
+	  form@("tag %d% %2f% %2f% %2f% %4f%\n\") % f@(tag.id) %
+	  f@(tag.x) % f@(tag.y) % f@(tag.bearing * 180.0 / pi) /
+	  f@(tag.edge_length))
+	call write@(gui, temporary)
+	call d@(form@("H:H2G:%s%") / f@(temporary))
+
+
+routine plot@Easy_C
+    takes base_name String
+    returns_nothing
+
+    # This routine will generate an SVG file to {base_name}.svg .
+
+    # Read in the data:
+    camera_locations :@= new@Array[Location]()
+    encoder_locations :@= new@Array[Location]()
+    line :@= new@String()
+    log_file_name :@= read_only_copy@(form@("%s%.log") / f@(base_name))
+    log_stream :@= open@In_Stream(log_file_name)
+    if log_stream == null@In_Stream
+	call d@(form@("Unable to read %v%\n\") / f@(log_file_name))
+	call exit@System(1)
+    while 1t
+	call line_read@(log_stream, line)
+	if line.size = 0
+	    break
+	location :@= parse@Location(line)
+	if location !== null@Location
+	    if location.tag = 0
+		call append@(encoder_locations, location)
+	    else
+		call append@(camera_locations, location)
+    call close@(log_stream)
+
+    # Compute the bounding box:
+    big :@= float@(123456789.0)
+    x_minimum :@=  big
+    x_maximum :@= -big
+    y_minimum :@=  big
+    y_maximum :@= -big
+
+    # Compute the bounding box:
+    size :@= encoder_locations.size
+    index :@= 0
+    while index < size
+	location := encoder_locations[index]
+	x :@= location.x
+	if x > x_maximum
+	    x_maximum := x
+	if x < x_minimum
+	    x_minimum := x
+
+	y :@= location.y
+	if y > y_maximum
+	    y_maximum := y
+	if y < y_minimum
+	    y_minimum := y
+
+	index := index + 1
+
+    size := camera_locations.size
+    index := 0
+    while index < size
+	location := camera_locations[index]
+	x :@= location.x
+	if x > x_maximum
+	    x_maximum := x
+	if x < x_minimum
+	    x_minimum := x
+
+	y :@= location.y
+	if y > y_maximum
+	    y_maximum := y
+	if y < y_minimum
+	    y_minimum := y
+
+	index := index + 1
+
+    # Expand the bounding box:
+    extra :@= float@(50.0)
+    x_minimum := x_minimum - extra
+    x_maximum := x_maximum + extra
+    y_minimum := y_minimum - extra
+    y_maximum := y_maximum + extra
+
+    # Open {svg}:
+    dx :@= x_maximum - x_minimum
+    dy :@= y_maximum - y_minimum
+
+    call d@(form@("x_max(%d%) - x_min(%d%) = dx(%d%)\n\") %
+      f@(x_maximum) % f@(x_minimum) / f@(dx))
+    call d@(form@("y_max(%d%) - y_min(%d%) = dy(%d%)\n\") %
+      f@(y_maximum) % f@(y_minimum) / f@(dy))
+
+    width :@= 1000.0f
+    height :@= 1000.0f
+    x_scale :@= width / dx
+    y_scale :@= height / dy
+    if x_scale < y_scale
+        y_scale := x_scale
+    else
+        x_scale := y_scale
+    svg :@= open@SVG(base_name, dx, dy, x_scale, y_scale, "")
+    svg.x_offset := -x_minimum
+    svg.y_offset := -y_minimum
+
+    #call rectangle@(svg, float@(x_minimum), float@(y_minimum),
+    #  dx, dy, "black", "white")
+
+    # Now plot the data:
+    red :@= "red;stroke-width:6"
+    orange :@= "orange;stroke-width:6"
+    purple :@= "purple;stroke-width:6"
+    pink :@= "pink;stroke-width:6"
+    blue :@= "blue;stroke-width:6"
+
+    gray :@= "gray;stroke-width:2"
+
+    green :@= "green;stroke-width:1"
+    black :@= "black;stroke-width:1"
+
+    cyan :@= "cyan;stroke_width:1"
+
+    length :@= float@(3.0)
+    x :@= float@(0.0)
+    y :@= float@(0.0)
+    x_previous :@= float@(0.0)
+    y_previous :@= float@(0.0)
+    size := camera_locations.size
+    index := 0
+    while index < size
+	location :@= camera_locations[index]
+	bearing :@= location.bearing
+	x_previous := x
+	y_previous := y
+	x := location.x
+	y := location.y
+	tag :@= location.tag
+	color :@= red
+	switch tag % 5
+	  case 0
+	    color := red
+	  case 1
+	    color := orange
+	  case 2
+	    color := purple
+	  case 3
+	    color := pink
+	  case 4
+	    color := blue
+	call line@(svg, x, y,
+	  x + length * cosine@(bearing),
+	  y + length * sine@(bearing), color)
+	if index != 0
+	    call line@(svg, x, y, x_previous, y_previous, green)
+	index := index + 1
+
+    size := encoder_locations.size
+    index := 0
+    while index < size
+	location :@= encoder_locations[index]
+	bearing :@= location.bearing
+	target_bearing :@= location.target_bearing
+	target_distance :@= location.target_distance
+	x_previous := x
+	y_previous := y
+	x := location.x
+	y := location.y
+	call line@(svg, x, y,
+	  x + length * cosine@(bearing),
+	  y + length * sine@(bearing), gray)
+	call line@(svg, x, y,
+	  x + target_distance * cosine@(target_bearing),
+	  y + target_distance * sine@(target_bearing), cyan)
+	if index != 0
+	    call line@(svg, x, y, x_previous, y_previous, black)
+	index := index + 1
+	
+    # All done:
+    call close@(svg)
+
+
+# {Globals} routines:
+
+routine one_and_only@Globals
+    takes_nothing
+    returns Globals
+
+    # This routine will return the one and only {Globals} object.
+
+    return null@Globals
+
+
+routine xml_read@Globals
+    takes globals Globals
+    takes xml_file_name String
+    returns_nothing
+
+    xml_in_stream :@= open@In_Stream(xml_file_name)
+    if xml_in_stream == null@In_Stream
+	call d@(form@("Unable to open %v%\n\") / f@(xml_file_name))
+    else
+	assert !xml_tag_match@(xml_in_stream, "Robot")
+	assert !xml_tag_end@(xml_in_stream, 0f)
+	globals.constants := xml_read@Constants(xml_in_stream)
+	call xml_read@(globals.map, xml_in_stream, 0xffffff00)
+	assert !xml_tag_match@(xml_in_stream, "/Robot")
+	assert !xml_tag_end@(xml_in_stream, 0f)
+	call close@(xml_in_stream)
+
+
+# {Location} routines:
+
+routine parse@Location
+    takes line String
+    returns Location
+
+    # This routine will parse and return a new {Location} from {line}.
+
+    pi :@= float@(3.14159265358979323846)
+    degrees_to_radians :@= pi / float@(180.0)
+    location :@= null@Location
+    character :@= lop@(line)
+    switch character
+      case 'C'
+	# Camera
+	timestamp :@= unsigned_lop@(line)
+	x :@= float@(double_lop@(line))
+	y :@= float@(double_lop@(line))
+	bearing :@= float@(double_lop@(line)) * degrees_to_radians
+	tag :@= unsigned_lop@(line)
+
+	location := new@Location()
+	location.bearing := bearing
+	location.tag := tag
+	location.timestamp := timestamp
+	location.x := x
+	location.y := y
+      case 'L'
+	# Encoder
+	timestamp :@= unsigned_lop@(line)
+	x :@= float@(double_lop@(line))
+	y :@= float@(double_lop@(line))
+	bearing :@= float@(double_lop@(line)) * degrees_to_radians
+	target_bearing :@= float@(double_lop@(line)) * degrees_to_radians
+	target_distance :@= float@(double_lop@(line))
+
+	location := new@Location()
+	location.bearing := bearing
+	location.tag := 0
+	location.timestamp := timestamp
+	location.target_bearing := target_bearing
+	location.target_distance := target_distance
+	location.x := x
+	location.y := y
+
+    return location
+
+
+# {Position} routines:
+
+routine copy@Position
+    takes position Position
+    returns Position
+
+    # This routine will return a copy of {position}.
+
+    assert position !== null@Position
+
+    result :@= new@Position()
+    result.ceiling_bearing := position.ceiling_bearing
+    result.ceiling_x := position.ceiling_x
+    result.ceiling_y := position.ceiling_y
+    result.ceiling_time := position.ceiling_time
+    result.cop_bearing := position.cop_bearing
+    result.cop_target_bearing := position.cop_target_bearing
+    result.cop_time := position.cop_time
+    result.cop_x := position.cop_x
+    result.cop_y := position.cop_y
+    result.level := position.level
+    result.state := position.state
+    return result
+
+
+routine parse@Position
+    takes line String
+    returns Position
+
+    # This routine will parse a {Position} object from {line} and return it.
+
+    pi :@= 3.14159265358979323846
+    degrees_to_radians :@= pi / 180.0
+
+    position :@= new@Position()
+    position.ceiling_bearing := double_lop@(line) * degrees_to_radians
+    position.ceiling_x := double_lop@(line)
+    position.ceiling_y := double_lop@(line)
+    position.ceiling_time := unsigned_lop@(line)
+    position.ceiling_id := unsigned_lop@(line)
+    position.ceiling_count := unsigned_lop@(line)
+    position.cop_bearing := double_lop@(line) * degrees_to_radians
+    position.cop_target_bearing := double_lop@(line) * degrees_to_radians
+    position.cop_time := unsigned_lop@(line)
+    position.cop_x := double_lop@(line)
+    position.cop_y := double_lop@(line)
+    position.level := unsigned_lop@(line)
+    position.state := unsigned_lop@(line)
+
+    #assert position.ceiling_id != 0
+    #assert position.ceiling_id <= 0xffff
+
+    return position
+
+
+routine put@Position
+    takes position Position
+    takes out_stream Out_Stream
+    returns_nothing
+
+    # This routine will output {position} to {out_stream}.
+
+    pi :@= 3.14159265358979323846
+    radians_to_degrees :@= 180.0 / pi
+
+    call put@(form@("%2f%\t\%2f%\t\%2f%\t\%d%\t\%d%\t\%d%") %
+      f@(position.ceiling_bearing * radians_to_degrees) %
+      f@(position.ceiling_x) % f@(position.ceiling_y) %
+      f@(position.ceiling_time) % f@(position.ceiling_id) /
+      f@(position.ceiling_count), out_stream)
+    call put@(form@("\t\%2f%\t\%2f%\t\%d%\t\%2f%\t\%2f%\t\%d%\t\%d%\n\") %
+      f@(position.cop_bearing * radians_to_degrees) %
+      f@(position.cop_target_bearing * radians_to_degrees) %
+      f@(position.cop_time) % f@(position.cop_x) % f@(position.cop_y) %
+      f@(position.level) / f@(position.state), out_stream)
+
+
+# {SVG} routines:
+
+routine circle@SVG
+    takes svg SVG
+    takes center_x Float
+    takes center_y Float
+    takes radius Float
+    takes stroke String
+    takes fill String
+    returns_nothing
+
+    # This routine will draw a circle to {svg} using ({center_x},{center_y})
+    # as the center, {radius} as the radius, with stroke of {stroke} and
+    # a fill of {fill}.
+
+    svg_stream :@= svg.stream
+    x_offset :@= svg.x_offset
+    y_offset :@= svg.y_offset
+    x_scale :@= svg.x_scale
+    y_scale :@= svg.y_scale
+    units :@= svg.units
+    call put@(form@("<circle cx=\dq\%f%%s%\dq\ cy=\dq\%f%%s%\dq\") %
+      f@((center_x + x_offset) * x_scale) % f@(units) %
+      f@((center_y + y_offset) * y_scale) / f@(units), svg_stream)
+    call put@(form@(
+      " r=\dq\%f%%s%\dq\ style=\dq\stroke:%s%; fill:%s%\dq\/>\n\") %
+      f@(radius * x_scale) % f@(units) % f@(stroke) / f@(fill), svg_stream)
+
+
+routine close@SVG
+    takes svg SVG
+    returns_nothing
+
+    # This routine will close {svg}.
+
+    svg_stream :@= svg.stream
+    call put@("</svg>\n\", svg_stream)
+    call close@(svg_stream)
+    svg.stream := null@Out_Stream
+
+
+routine line@SVG
+    takes svg SVG
+    takes x1 Float
+    takes y1 Float
+    takes x2 Float
+    takes y2 Float
+    takes stroke String
+    returns_nothing
+
+    # This routine will draw a {stroke} color line from
+    # ({x1},{y1}) to ({x2},{y2}).
+
+    svg_stream :@= svg.stream
+    x_offset :@= svg.x_offset
+    y_offset :@= svg.y_offset
+    x_scale :@= svg.x_scale
+    y_scale :@= svg.y_scale
+    units :@= svg.units
+    call put@(form@("<line x1=\dq\%f%%s%\dq\ y1=\dq\%f%%s%\dq\") %
+      f@((x1 + x_offset) * x_scale) % f@(units) %
+      f@((y1 + y_offset) * y_scale) / f@(units), svg_stream)
+    call put@(form@(" x2=\dq\%f%%s%\dq\ y2=\dq\%f%%s%\dq\") %
+      f@((x2 + x_offset) * x_scale) % f@(units) %
+      f@((y2 + y_offset) * y_scale) / f@(units), svg_stream)
+    call put@(form@(" style=\dq\stroke:%s%\dq\/>\n\") / f@(stroke), svg_stream)
+
+
+routine open@SVG
+    takes base_name String
+    takes width Float
+    takes height Float
+    takes x_scale Float
+    takes y_scale Float
+    takes units String
+    returns SVG
+
+    # This routine will create and return an open {SVG} object.
+
+    svg :@= null@SVG
+    file_name :@= read_only_copy@(form@("%s%.svg") / f@(base_name))
+    svg_stream :@= open@Out_Stream(file_name)
+    if svg_stream !== null@Out_Stream
+	svg := new@SVG()
+	svg.height := height
+	svg.stream := svg_stream
+	svg.width := width
+	svg.units := units
+	svg.x_scale := x_scale
+	svg.y_scale := y_scale
+	svg.x_offset := 0.0f
+	svg.y_offset := 0.0f
+
+	call put@("<?xml version=\dq\1.0\dq\ standalone=\dq\no\dq\?>\n,n\",
+	  svg_stream)
+	call put@("<!DOCTYPE svg PUBLIC \dq\-//W3C//DTD SVG 1.1//EN\dq,n\",
+	  svg_stream)
+	call put@(
+	  " \dq\http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\dq\>\n,n\",
+	  svg_stream)
+	call put@(form@("<svg width=\dq\%f%%s%\dq\ height=\dq\%f%%s%\dq,n") %
+	  f@(width * x_scale) % f@(units) % f@(height * y_scale) / f@(units),
+	  svg_stream)
+	call put@(" version=\dq\1.1\dq,n\", svg_stream)
+	call put@(" xmlns=\dq\http://www.w3.org/2000/svg\dq\>\n,n\", svg_stream)
+
+    return svg
+
+
+routine polygon@SVG
+    takes svg SVG
+    takes points Array[SVG_Point]
+    takes stroke String
+    takes fill String
+    returns_nothing
+
+    # This routine will draw a polygon consisting of {points} to {svg}
+    # with an outline color of {stroke} and a filled color of {fill}.
+
+    svg_stream :@= svg.stream
+    x_offset :@= svg.x_offset
+    y_offset :@= svg.y_offset
+    x_scale :@= svg.x_scale
+    y_scale :@= svg.y_scale
+    units :@= svg.units
+    call put@("<polygon points=\dq\", svg_stream)
+    size :@= points.size
+    index :@= 0
+    while index < size
+	point :@= points[index]
+	if index != 0
+	    call put@(' ', svg_stream)
+	x :@= (point.x + x_offset) * x_scale
+	y :@= (point.y + y_offset) * y_scale
+	call put@(form@("%f%%s%,%f%%s%") %
+	  f@(x) % f@(units) % f@(y) / f@(units), svg_stream)
+	index := index + 1
+    call put@(form@("\dq\ style=\dq\stroke:%s%; fill:%s%\dq\/>\n\") %
+      f@(stroke) / f@(fill), svg_stream)
+
+
+routine rectangle@SVG
+    takes svg SVG
+    takes x Float
+    takes y Float
+    takes width Float
+    takes height Float
+    takes stroke String
+    takes fill String
+    returns_nothing
+
+    # This routine will draw a {width} by {height} rectangle with one corner
+    # at ({x},{y}) and an exterior color of {stroke} and a fill color of {fill}.
+
+    svg_stream :@= svg.stream
+    x_offset :@= svg.x_offset
+    y_offset :@= svg.y_offset
+    x_scale :@= svg.x_scale
+    y_scale :@= svg.y_scale
+    x_final :@= (x + x_offset) * x_scale
+    y_final :@= (y + y_offset) * y_scale
+    units :@= svg.units
+    call put@(form@("<rect x=\dq\%f%%s%\dq\ y=\dq\%f%%s%\dq\") %
+      f@(x_final) % f@(units) % f@(y_final) / f@(units), svg_stream)
+    call put@(form@(" width=\dq\%f%%s%\dq\ height=\dq\%f%%s%\dq\") %
+      f@(width * x_scale) % f@(units) % f@(height * y_scale) / f@(units),
+      svg_stream)
+    call put@(form@(" style=\dq\stroke:%s%; fill:%s%\dq\/>\n\") %
+      f@(stroke) / f@(fill), svg_stream)
+
+
+
+routine text@SVG
+    takes svg SVG
+    takes message String
+    takes x Float
+    takes y Float
+    takes font_family String
+    takes font_size Unsigned
+    returns_nothing
+
+    # This routine will draw a {message} at ({x},{y}) with {font_size} font
+    # of type {font_family}.
+
+    svg_stream :@= svg.stream
+    x_offset :@= svg.x_offset
+    y_offset :@= svg.y_offset
+    x_scale :@= svg.x_scale
+    y_scale :@= svg.y_scale
+    units :@= svg.units
+    call put@(form@("<text x=\dq\%f%%s%\dq\ y=\dq\%f%%s%\dq\") %
+      f@((x + x_offset) * x_scale) % f@(units) %
+      f@((y + y_offset) * y_scale) / f@(units), svg_stream)
+    call put@(form@(" style=\dq\font-family:%s%; font-size:%d%\dq\>") %
+      f@(font_family) / f@(font_size), svg_stream)
+    call put@(form@("%s%</text>\n\") / f@(message), svg_stream)
+
+
+# {SVG_Point}
+
+routine create@SVG_Point
+    takes x Float
+    takes y Float
+    returns SVG_Point
+
+    # This routine will return a new {SVG_Point} containing {x} and {y}.
+
+    svg_point :@= new@SVG_Point()
+    svg_point.x := x
+    svg_point.y := y
+    return svg_point
+
+

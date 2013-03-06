@@ -1,0 +1,15 @@
+easy_c 1.0
+
+# Copyright (c) 2011 by Wayne C. Gramlich
+# All rights reserved
+
+library Easy_C
+
+routine main@Easy_C
+    takes arguments Array[String]
+    returns Integer
+
+    call d@("Hello\n\")
+
+    return 0i
+

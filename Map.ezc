@@ -1,0 +1,3356 @@
+easy_c 1.0
+
+library Easy_C
+library Map
+library Math
+library Unix_Dispatch
+
+define Constants
+    record
+	bearing_limit Double		# Maximum bearing error for forward mode
+	camera_dx Double		# Camera dx from robot center
+	camera_dy Double		# Camera dy from robot center
+	camera_twist Double		# Angle between camera and robot X axes
+	grip_p Double			# Gipper P (proportional) constant
+	grip_i Double			# Gipper I (integral) constant
+	grip_d Double			# Gipper D (differential) constant
+	inches_across_frame Double	# Inches across camera frame (X axis)
+	left_force_increment Unsigned	# Left force threshold increment
+	linear Double			# Target distance speed coefficient
+	pid_p Double			# Proportional constant
+	pid_i Double			# Integral constant
+	pid_d Double			# Differential constant
+	ramp Unsigned			# How slow to ramp the motors
+	right_force_increment Unsigned	# Right force threshold increment
+	speed_limit Unsigned		# Top speed of robot motor
+	stall Unsigned			# Robot motor stall speed
+	target_limit Double		# How close to target we need to get
+	twist_limit Unsigned		# Top difference of robot motor
+
+define Map
+    record
+	big Double			# Big number
+	changed Unsigned		# Number of Tag/Neighbor changes
+	locked Logical			# {true}=> map updating locked
+	neighbor_updated [<= Tag_Neighbor] # When {Tag_Neighbor} changed
+	neighbors Array[Tag_Neighbor]	# Temporary list of {Tag_Neighbor}'s
+	neighbors_changed Array[Tag_Neighbor] # List of changed {Tag_Neighbor}'s
+	pi Double			# Circumference of unit circle
+	segment_way1_tag_id Unsigned
+	segment_way1_id Unsigned
+	segment_way2_tag_id Unsigned
+	segment_way2_id Unsigned
+	segments Array[Path_Segment]	# Temporary list of {Segment}'s
+	tag_updated [<= Tag, String]	# Invoked when {Tag} is updated
+	tags Array[Tag]			# All tags
+	tags_changed Array[Tag]		# List of changed tags
+	tags_table Hash_Table[Unsigned, Tag] # Tag lookup table
+	temporary1 String		# First temporary string
+	temporary2 String		# Second temporary string
+	path Array[Way]			# Path of {Way}'s to follow
+	path_queue Array[Way]		# Path of {Way}'s to follow
+	ways Array[Way]			# All {Way}'s
+	visit_counter Unsigned		# Used for preventing recursion
+
+define Path_Segment			# One segment of path
+    record
+	way1 Way			# First way (lowest id)
+	way2 Way			# Second way (higher id)
+
+define Tag
+    record
+	map Map				# Parent map
+	direction Unsigned		# Tag direction (0=N,1=W,2=S,3=E)
+	id Unsigned			# Id number of tag
+	neighbors Array[Tag_Neighbor]	# Tags close by
+	neighbors_sorted Logical	# {true}=>{neighbors} is sorted
+	visit Unsigned			# Visit counter
+	# Pixel coordinate information:
+	corners Array[Tag_Corner]	# 4 corners (image coord.)
+	#FIXME: twist should really be called bearing!!!
+	twist Double			# Tag bottom edge angle (image coord)
+	diagonal Double			# Diagonal of tag (image pixels)
+	center_x Double			# X center of 4 corners (image coord.)
+	center_y Double			# Y center of 4 corners (image coord.)
+	# Intermediate results for camera
+	camera_bearing Double		# Camera bearing angle (floor coord.)
+	camera_x Double			# Camera X coordinate (floor coord.)
+	camera_y Double			# Camera Y coordinate (floor coord.)
+	# Most recent robot location relative to tag:
+	robot_bearing Double		# Robot bearing
+	robot_x	Double			# Robot x location (floor coord.)
+	robot_y	Double			# Robot y location (floor coord.)
+	# Absolute space values:
+	bearing Double			# Tag bearing (floor coord.)
+	xx Double			# Tag X (floor coord.)
+	yy Double			# Tag Y (floor coord.)
+	edge_length Double		# Tag edge length
+	# Way points:
+	ways Array[Way]			# Way points associated with this Tag
+
+define Tag_Corner
+    record
+	x Double			# X corner of tag (image coord.)
+	y Double			# Y corner of tag (image coord.)
+
+define Tag_Neighbor
+    record
+	changed Logical			# {true} if contents changed (for debug)
+	goodness_metric Double		# Metric for how good neighbor is
+	origin Tag			# Origin {Tag}
+	target Tag			# Target {Tag}
+	target_angle Double		# Org bottom edge to targ. center angle
+	target_distance Double		# Distance to target
+	target_twist Double		# Org. to targ. bottom edge angle change
+
+define Way				# Way Point
+    record
+	angle Double			# {Way} angle
+	close_width Double		# Close Width
+	dx Double			# {Way} X offset
+	dy Double			# {Way} Y offset
+	flags String			# {Way} flags
+	height Double			# Height to grab at
+	id Unsigned			# {Way} identifier
+	name String			# {Way} name
+	open_width Double		# Open Width
+	path_distance Double		# path distance
+	path_back Way			# path return tag
+	segments Array[Path_Segment]	# {Path_Segment}'s connected to {Way}
+	tag Tag				# {Tag} to use as {Way} origin
+	visit Unsigned			# Visited flag
+
+# {Constants} routines:
+
+routine create@Constants
+    takes bearing_limit Double
+    takes speed_limit Unsigned
+    takes stall Unsigned
+    takes target_limit Double
+    takes twist_limit Unsigned
+    takes ramp Unsigned
+    takes pid_p Double
+    takes pid_i Double
+    takes pid_d Double
+    takes linear Double
+    takes camera_dx Double
+    takes camera_dy Double
+    takes camera_twist Double
+    takes grip_p Double
+    takes grip_i Double
+    takes grip_d Double
+    takes left_force_increment Unsigned
+    takes right_force_increment Unsigned
+    returns Constants
+
+    # This routine will create and return a new {Constants} object that
+    # contains {bearing_limit}, {speed_limit}, {stall}, {twist_limit},
+    # {ramp}, {target_limit}, {pid_p}, {pid_i}, {pid_d}, {linear},
+    # {camera_dx}, {camera_dy}, {camera_twist}, {grip_p}, {grip_i}, {grip_d},
+    # {left_force_increment}, and {right_force_increment}.
+
+    constants :@= empty_create@Constants()
+    constants.bearing_limit := bearing_limit
+    constants.camera_dx := camera_dx
+    constants.camera_dy := camera_dy
+    constants.camera_twist := camera_twist
+    constants.grip_p := grip_p
+    constants.grip_i := grip_i
+    constants.grip_d := grip_d
+    constants.left_force_increment := left_force_increment
+    constants.linear := linear
+    constants.pid_p := pid_p
+    constants.pid_i := pid_i
+    constants.pid_d := pid_d
+    constants.ramp := ramp
+    constants.right_force_increment := right_force_increment
+    constants.speed_limit := speed_limit
+    constants.stall := stall
+    constants.target_limit := target_limit
+    constants.twist_limit := twist_limit 
+    return constants
+
+
+routine empty_create@Constants
+    takes_nothing
+    returns Constants
+
+    # This routine will create and return an empty {Constants} object.
+
+    constants :@= new@Constants()
+    constants.inches_across_frame := 104.375  #FIXME: Magic constant for now!!!
+    return constants
+
+
+routine line_parse@Constants
+    takes constants Constants
+    takes line String
+    returns_nothing
+
+    # This routine will parse the data from a {line} that was sent using
+    # {send@Constants} and store the result into {constants}.
+
+    pi :@= 3.14159265358979323846
+
+    constants.bearing_limit := double_lop@(line) * pi / 180.0
+    constants.speed_limit := unsigned_lop@(line)
+    constants.stall := unsigned_lop@(line)
+    constants.target_limit := double_lop@(line)
+    constants.twist_limit := unsigned_lop@(line)
+    constants.ramp := unsigned_lop@(line)
+    constants.pid_p := double_lop@(line)
+    constants.pid_i := double_lop@(line)
+    constants.pid_d := double_lop@(line)
+    constants.linear := double_lop@(line)
+    constants.camera_dx := double_lop@(line)
+    constants.camera_dy := double_lop@(line)
+    constants.camera_twist := double_lop@(line) * pi / 180.0
+    constants.grip_p := double_lop@(line)
+    constants.grip_i := double_lop@(line)
+    constants.grip_d := double_lop@(line)
+    constants.left_force_increment := unsigned_lop@(line)
+    constants.right_force_increment := unsigned_lop@(line)
+
+
+routine send@Constants
+    takes constants Constants
+    takes dispatch Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine will send the contents of {constants} to {dispatch}.
+
+    pi :@= 3.14159265358979323846
+
+    call write@(dispatch, form@(
+      "constants %2f% %d% %d% %2f% %d% %d% %2f% %2f% %2f% %2f% %2f% %2f% %2f% %2f% %2f% %2f% %d% %d%\n\") %
+      f@(constants.bearing_limit * 180.0 / pi) % f@(constants.speed_limit) %
+      f@(constants.stall) % f@(constants.target_limit) %
+      f@(constants.twist_limit) % f@(constants.ramp) %
+      f@(constants.pid_p) % f@(constants.pid_i) % f@(constants.pid_d) %
+      f@(constants.linear) % f@(constants.camera_dx) % f@(constants.camera_dy) %
+      f@(constants.camera_twist * 180.0 / pi) %
+      f@(constants.grip_p) % f@(constants.grip_i) % f@(constants.grip_d) %
+      f@(constants.left_force_increment) / f@(constants.right_force_increment))
+
+
+routine xml_read@Constants
+    takes xml_stream In_Stream
+    returns Constants
+
+    # This routine will read in a {Constansts} from {xml_stream} and return it.
+
+    temporary1 :@= new@String()
+    temporary2 :@= new@String()
+
+    # Read the <Constants...>:
+    assert !xml_tag_match@(xml_stream, "Constants")
+
+    # Preload the field values into local variables with bogus values:
+    pi :@= 3.14159265358979323846
+    big :@= 123456789.0
+    bearing_limit :@= big
+    camera_dx :@= big
+    camera_dy :@= big
+    camera_twist :@= big
+    camera_twist := 0.0		# Temporary kludge!!!
+    grip_p :@= big
+    grip_i :@= big
+    grip_d :@= big
+    left_force :@= 0xffffffff
+    linear :@= big
+    pid_p :@= big
+    pid_i :@= big
+    pid_d :@= big
+    ramp :@= 0xffffffff
+    right_force :@= 0xffffffff
+    speed_limit :@= 0xffffffff
+    stall :@= 0xffffffff
+    twist_limit :@= 0xffffffff
+    target_limit :@= big
+
+    # Read all of the attributes:
+    # Read all of the attributes:
+    while !xml_attribute_read@(xml_stream, temporary1, temporary2) &&
+      temporary1.size != 0
+	if equal@(temporary1, "Bearing_Limit")
+	    bearing_limit := double_convert@(temporary2) * pi / 180.0
+	else_if equal@(temporary1, "Camera_DX")
+	    camera_dx := double_convert@(temporary2)
+	else_if equal@(temporary1, "Camera_DY")
+	    camera_dy := double_convert@(temporary2)
+	else_if equal@(temporary1, "Camera_Twist")
+	    camera_twist := double_convert@(temporary2) * pi / 180.0
+	else_if equal@(temporary1, "Grip_D")
+	    grip_d := double_convert@(temporary2)
+	else_if equal@(temporary1, "Grip_I")
+	    grip_i := double_convert@(temporary2)
+	else_if equal@(temporary1, "Grip_P")
+	    grip_p := double_convert@(temporary2)
+	else_if equal@(temporary1, "Left_Force")
+	    left_force := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Linear")
+	    linear := double_convert@(temporary2)
+	else_if equal@(temporary1, "PID_D")
+	    pid_d := double_convert@(temporary2)
+	else_if equal@(temporary1, "PID_I")
+	    pid_i := double_convert@(temporary2)
+	else_if equal@(temporary1, "PID_P")
+	    pid_p := double_convert@(temporary2)
+	else_if equal@(temporary1, "Ramp")
+	    ramp := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Right_Force")
+	    right_force := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Speed_Limit")
+	    speed_limit := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Stall")
+	    stall := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Target_Limit")
+	    target_limit := double_convert@(temporary2)
+	else_if equal@(temporary1, "Twist_Limit")
+	    twist_limit := unsigned_convert@(temporary2)
+	else
+	    call d@(form@("field=%v% value=%v%\n\") %
+	      f@(temporary1) / f@(temporary2))
+	    assert 0f
+    assert !xml_tag_end@(xml_stream, 1t)
+
+    # Verify that all attributes were read in:
+    assert bearing_limit != big
+    assert camera_dx != big
+    assert camera_dy != big
+    assert camera_twist != big
+    assert grip_p != big
+    assert grip_i != big
+    assert grip_d != big
+    #assert left_force != 0xffffffff
+    assert linear != big
+    assert pid_p != big
+    assert pid_i != big
+    assert pid_d != big
+    assert speed_limit != 0xffffffff
+    assert stall != 0xffffffff
+    assert twist_limit != 0xffffffff
+    assert target_limit != big
+    #assert right_force != 0xffffffff
+    assert ramp != 0xffffffff
+
+    # Create and load {constants}:
+    constants :@= create@Constants(bearing_limit, speed_limit, stall,
+      target_limit, twist_limit, ramp, pid_p, pid_i, pid_d, linear,
+      camera_dx, camera_dy, camera_twist, grip_p, grip_i, grip_d, left_force,
+      right_force)
+
+    return constants
+    
+
+routine xml_write@Constants
+    takes constants Constants
+    takes indent Unsigned
+    takes xml_stream Out_Stream
+    returns_nothing
+
+    # This routine will write out {constants} to {xml_stream} indented
+    # by {indent}.
+
+    pi :@= 3.14159265358979323846
+
+    call put@(form@("%p%<Constants") / f@(indent), xml_stream)
+    call put@(form@(" Bearing_Limit=\dq\%2f%\dq\") /
+      f@(constants.bearing_limit * 180.0 / pi), xml_stream)
+    call put@(form@(" Camera_DX=\dq\%2f%\dq\") /
+      f@(constants.camera_dx), xml_stream)
+    call put@(form@(" Camera_DY=\dq\%2f%\dq\") /
+      f@(constants.camera_dy), xml_stream)
+    call put@(form@(" Camera_Twist=\dq\%2f%\dq\") /
+      f@(constants.camera_twist * 180.0 / pi), xml_stream)
+    call put@(form@(" Grip_P=\dq\%2f%\dq\") /
+      f@(constants.grip_p), xml_stream)
+    call put@(form@(" Grip_I=\dq\%2f%\dq\") /
+      f@(constants.grip_i), xml_stream)
+    call put@(form@(" Grip_D=\dq\%2f%\dq\") /
+      f@(constants.grip_d), xml_stream)
+    # FIXME: Should Left_Force_Increment!!!
+    call put@(form@(" Left_Force=\dq\%d%\dq\") /
+      f@(constants.left_force_increment), xml_stream)
+    call put@(form@(" Linear=\dq\%2f%\dq\") /
+      f@(constants.linear), xml_stream)
+    call put@(form@(" PID_P=\dq\%2f%\dq\") /
+      f@(constants.pid_p), xml_stream)
+    call put@(form@(" PID_I=\dq\%2f%\dq\") /
+      f@(constants.pid_i), xml_stream)
+    call put@(form@(" PID_D=\dq\%2f%\dq\") /
+      f@(constants.pid_d), xml_stream)
+    call put@(form@(" Ramp=\dq\%d%\dq\") /
+      f@(constants.ramp), xml_stream)
+    # FIXME: Should Right_Force_Increment!!!
+    call put@(form@(" Right_Force=\dq\%d%\dq\") /
+      f@(constants.right_force_increment), xml_stream)
+    call put@(form@(" Speed_Limit=\dq\%d%\dq\") /
+      f@(constants.speed_limit), xml_stream)
+    call put@(form@(" Stall=\dq\%d%\dq\") /
+      f@(constants.stall), xml_stream)
+    call put@(form@(" Target_Limit=\dq\%2f%\dq\") /
+      f@(constants.target_limit), xml_stream)
+    call put@(form@(" Twist_Limit=\dq\%2f%\dq\") /
+      f@(constants.twist_limit), xml_stream)
+    call put@("/>\n\", xml_stream)
+
+
+# {Double} routines:
+
+routine angle_between@Double
+    takes from_angle Double
+    takes to_angle Double
+    returns Double
+
+    # This routine will return the angle from {from_angle} to {to_angle}
+    # with the least amount of turn.
+
+    return angle_normalize@(to_angle - from_angle)
+
+
+routine angle_normalize@Double
+    takes radians Double
+    returns Double
+    
+    # This routine will normalize {radians} to be beteween -{pi} and +{pi}.
+
+    pi :@=  3.14159265358979323846
+    pi2 :@= 6.28318530717958647692  # 2.0 * {pi}
+    while radians > pi
+	radians := radians - pi2
+    while radians < -pi
+	radians := radians + pi2
+    return radians
+
+
+# {Map} routines:
+
+routine closest_tag@Map
+    takes map Map
+    takes x Double
+    takes y Double
+    returns Tag
+
+    # This routine will return the {Tag} that is closest to ({x}, {y}).
+
+    # Set {closest_distance} to a large number so that the first
+    # distance we find will replace it:
+    closest_distance :@= 987654321.0
+    closest_tag :@= null@Tag
+
+    # Iterate over each {tag} in {tags}:
+    tags :@= map.tags
+    size :@= tags.size
+    index :@= 0
+    while index < size
+	tag :@= tags[index]
+
+	# Compute the X/Y offsets from {tag} to ({x}, {y}):
+	dx :@= x - tag.x
+	dy :@= y - tag.y
+
+	# Compute distance:
+	distance :@= square_root@(dx * dx + dy * dy)
+
+	# See if {tag} is closer:
+	if distance < closest_distance
+	    # {tag} is closer:
+	    closest_distance := distance
+	    closest_tag := tag
+
+	index := index + 1
+
+    #call d@(form@("closest_tag@Map(%2f%, %2f%) => %d%\n\") %
+    #  f@(x) % f@(y) / f@(closest_tag.id))
+
+    return closest_tag
+
+
+routine closest_way@Map
+    takes map Map
+    takes x Double
+    takes y Double
+    returns Way
+
+    # This routine will return the {Way} that is closest to ({x}, {y}).
+
+    # Set {closest_distance} to a large number so that the first
+    # distance we find will replace it:
+    closest_distance :@= 987654321.0
+    closest_way :@= null@Way
+
+    # Iterate over each {way} in {ways}:
+    ways :@= map.ways
+    size :@= ways.size
+    index :@= 0
+    while index < size
+	way :@= ways[index]
+
+	# Compute way offset from ({x},{y}):
+	way_tag :@= way.tag
+	dx :@= x - (way_tag.x + way.dx)
+	dy :@= y - (way_tag.y + way.dy)
+
+	# Compute distance:
+	distance :@= square_root@(dx * dx + dy * dy)
+
+	# See if {way} is closer:
+	if distance < closest_distance
+	    # {way} is closer:
+	    closest_distance := distance
+	    closest_way := way
+
+	index := index + 1
+
+    #call d@(form@("closest_way@Map(%2f%, %2f%) => %d%:%d%:%s%\n\") %
+    #  f@(x) % f@(y) % f@(closest_way.tag.id) % f@(closest_way.id) /
+    #  f@(closest_way.name))
+
+    return closest_way
+
+
+routine create@Map
+    returns Map
+
+    # This routine will create and return {Map}.
+
+    map :@= new@Map()
+    map.big := 123456789.0
+    map.changed := 0
+    map.locked := 0f
+    map.neighbor_updated := neighbor_updated_nop@Map
+    map.neighbors := new@Array[Tag_Neighbor]()
+    map.neighbors_changed := new@Array[Tag_Neighbor]()
+    map.pi := 3.14159265358979323846
+    map.path := new@Array[Way]()
+    map.path_queue := new@Array[Way]()
+    map.segment_way1_tag_id := 0
+    map.segment_way1_id := 0
+    map.segment_way2_tag_id := 0
+    map.segment_way2_id := 0
+    map.segments := new@Array[Path_Segment]()
+    map.tag_updated := tag_updated_nop@Map
+    map.tags := new@Array[Tag]()
+    map.tags_changed := new@Array[Tag]()
+    map.tags_table := create@Hash_Table[Unsigned, Tag](null@Tag,
+      hash@Unsigned, equal@Unsigned, buffer_append@Unsigned, buffer_append@Tag)
+    map.temporary1 := new@String()
+    map.temporary2 := new@String()
+    map.ways := new@Array[Way]()
+    map.visit_counter := 0
+    return map
+
+
+routine xmap_read@Map
+    takes map Map
+    takes map_file_name String
+    returns Logical
+
+    # This routine will read {map_file_name} into {map}.  {true@Logical}
+    # is returned if {map_file_is} not successfully read.
+    
+    call d@(form@("map_read@Map(*, %v%)\n\") / f@(map_file_name))
+    xml_in_stream :@= open@In_Stream(map_file_name)
+    failed :@= xml_in_stream == null@In_Stream
+    if !failed
+	call xml_read@(map, xml_in_stream, 0xffffff00)
+	call close@(xml_in_stream)
+	call map_update@(map, "xmap_read@Map", 0xffffff00)
+    return failed
+
+
+routine map_update@Map
+    takes map Map
+    takes from String
+    takes indent Unsigned
+    returns_nothing
+
+    # This routine will update the map coordinates for each {tag}
+    # in {map}.  The tag with the lowest id number is used as the
+    # origin and bearing of zero.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("\n\%p%=>map_update@Map(*, %v%): changed=%d%\n\") %
+	  f@(indent) % f@(from) / f@(map.changed))
+    indent1 :@= indent + 1
+
+    if map.changed != 0
+	map.changed := 0
+
+	# We want the tag with the lowest id number to be the origin.
+	# Sort {tags} from lowest tag id to greatest:
+	tags :@= map.tags
+	call sort@(tags, compare@Tag)
+
+	# For now, we are going to delay sending out any tag and neighbor
+	# updates until after the map is updated.  Set {map.tag_updated} and
+	# {map.neighbor_updated} to be a NOP (no operation) until we restore
+	# them after the map has been regenerated:
+	tag_updated :@= map.tag_updated
+	map.tag_updated := tag_updated_nop@Map
+	neighbor_updated :@= map.neighbor_updated
+	map.neighbor_updated := neighbor_updated_nop@Map
+
+	# Now we want to force the {map_update} routine to visit each tag once:
+	visit :@= map.visit_counter + 1
+	map.visit_counter := visit
+
+	# The first tag in {tags} has the lowest id and is forced to be the
+	# map origin:
+	origin_tag :@= tags[0]
+	
+	# Now we can force a map update starting from {origin_tag}:
+	call map_update@(origin_tag,
+	  0.0, 0.0, 0.0, origin_tag.edge_length, visit,
+	  "map_update@Map", indent1)
+
+	# Now we restore update routines to their previous values and
+	# call the :
+	map.tag_updated := tag_updated
+	map.neighbor_updated := neighbor_updated
+
+	# Make sure all new tags get the update routine called on them:
+	tags_changed :@= map.tags_changed
+	call sort@(tags_changed, compare@Tag)
+	call unique@(tags_changed, equal@Tag)
+	size :@= tags_changed.size
+	index :@= 0
+	while index < size
+	    tag :@= tags_changed[index]
+	    call tag_updated(tag, "map_update@Map")
+	    index := index + 1
+	call trim@(tags_changed, 0)
+
+	# Make sure all new neighbors get the update routine called on them:
+	neighbors_changed :@= map.neighbors_changed
+	call sort@(neighbors_changed, compare@Tag_Neighbor)
+	call unique@(neighbors_changed, equal@Tag_Neighbor)
+	size := neighbors_changed.size
+	index := 0
+	while index < size
+	    neighbor :@= neighbors_changed[index]
+	    call neighbor_updated(neighbor)
+	    index := index + 1
+	call trim@(neighbors_changed, 0)
+    
+    if trace
+	call d@(form@("%p%<=map_update@Map(*, %v%): changed=%d%\n,n\") %
+	  f@(indent) % f@(from) / f@(map.changed))
+
+
+routine map_write@Map
+    takes map Map
+    takes map_file_name String
+    returns Logical
+
+    # This routine will write the tag map in {map} to {map_file_name}.
+    # {true@Logical} is returned if there is a failure.
+
+    xml_out_stream :@= open@Out_Stream("tags.xml")
+    failed :@= xml_out_stream == null@Out_Stream
+    if !failed
+	call xml_write@(map, 0, xml_out_stream)
+	call close@(xml_out_stream)
+    return failed
+
+
+routine neighbor_updated_nop@Map
+    takes neighbor Tag_Neighbor
+    returns_nothing
+
+    # This routine is called whenever {tag} is updated.  This routine
+    # can be replace in {Map}.
+
+    #call d@(form@("neighbor_updated_nop@Map(neighbor={oid1=%d% tid2=%d%)\n\") %
+    #  f@(neighbor.origin.id) / f@(neighbor.target.id))
+
+
+routine path_find@Map
+    takes map Map
+    takes from_way Way
+    takes to_way Way
+    takes indent Unsigned
+    returns Array[Way]
+
+    # This routine will return a sequence of {Way}'s that lead
+    # from {from_way} to {to_way} using {map}.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>path_find@Map(%w%, %w%)\n\") %
+	  f@(indent) % f@(from_way) / f@(to_way))
+
+    assert from_way !== null@Way
+    assert to_way !== null@Way
+
+    # The {visit} field of each {Way} will cycle from {cleared} to {queued}
+    # to {done}.  So we allocate the next 3 values from {visit_counter}:
+    cleared :@= map.visit_counter + 1
+    queued :@= cleared + 1
+    done :@= queued + 1
+    map.visit_counter := done
+
+    # Clear {path_distance} for each {Way} in {ways}:
+    big :@= map.big
+    ways :@= map.ways
+    size :@= ways.size
+    index :@= 0
+    while index < size
+	way :@= ways[index]
+	way.visit := cleared
+	way.path_distance := big
+	way.path_back := null@Way
+	index := index + 1
+
+    # Empty the work {queue}:
+    queue :@= map.path_queue
+    call trim@(queue, 0)
+
+    # Set the path distance from {from_way} to itself to 0.0:
+    from_way.path_distance := 0.0
+    from_way.path_back := null@Way
+
+    # Enqueue {from_way} onto {queue}; it will be the first tag visited:
+    from_way.visit := queued
+    call append@(queue, from_way)
+
+    #call d@(form@("Append %d%:%d% to queue (queue.size = %d%)\n\") %
+    #  f@(from_way.tag.id) % f@(from_way.id) / f@(queue.size))
+
+    # Find the {Way} on {queue} that has the shortest {path_distance}:
+    while 1t
+	# Get the current {queue} size:
+	queue_size :@= queue.size
+	if queue.size = 0
+	    call d@(form@("path_find@Map(%d%, %d%):Empty queue!!!\n\") %
+	      f@(from_way.id) / f@(to_way.id))
+	    break
+
+	# Start with the first {Way} in {queue}:
+	shortest_path_index :@= 0
+	shortest_path_distance :@= queue[shortest_path_index].path_distance
+
+	# Search the remaining {Way}'s in {queue} for one that is closer.
+	# The first time through this loop, only one {way} has a path
+	# distance (of 0.0) and the rest are {big}:
+	index := 1
+	while index < queue_size
+	    way :@= queue[index]
+	    path_distance :@= way.path_distance
+	    if path_distance < shortest_path_distance
+		# This one is closer, remember that this is the one:
+		shortest_path_distance := path_distance
+		shortest_path_index := index
+	    index := index + 1
+	assert shortest_path_index < queue_size
+
+	# Yank the closest {Way} out of queue and replace it the one on the end:
+	# The order of {Way}'s in {queue} does not matter:
+	closest_way :@= queue[shortest_path_index]
+	queue_size := queue_size - 1
+	queue[shortest_path_index] := queue[queue_size]
+	call trim@(queue, queue_size)
+
+	#call d@(form@("closest=%d% (queue.size=%d%)\n\") %
+	#  f@(closest_way.id) / f@(queue.size))
+
+	# Change {closest_way} from {queued} to {done}:
+	assert closest_way.visit = queued
+	closest_way.visit := done
+
+	# We are done if {closest_way} matches {to_way}:
+	if closest_way == to_way
+	    break
+
+	# Grab the X/Y coordinate of {closest}:
+	closest_tag :@= closest_way.tag
+	closest_way_x :@= closest_tag.x + closest_way.dx
+	closest_way_y :@= closest_tag.y + closest_way.dy
+	
+	# Sweep through {segments} for a new {Way}'s to add to {queue}:
+	segments :@= closest_way.segments
+	segments_size :@= segments.size
+	index := 0
+	while index < segments_size
+	    # Grab the {index}'th {Way_Segment} from {segments}:
+	    segment :@= segments[index]
+	    target :@= other_way@(segment, closest_way, 0xffffff00)
+	    target_tag :@= target.tag
+
+	    # Grab the X/Y coordinate from {closest}:
+	    dx :@= target_tag.x + target.dx - closest_way_x
+	    dy :@= target_tag.y + target.dy - closest_way_y
+	    distance :@= square_root@(dx * dx + dy * dy)
+
+	    # Now see if there {segment} is a little closer:
+	    possible_distance :@= shortest_path_distance + distance
+	    if possible_distance < target.path_distance
+		# {closest_way} is new shortest path to {target}:
+		target.path_distance := possible_distance
+		target.path_back := closest_way
+
+		# See if {target} needs to be put on {queue}:
+		target_visit :@= target.visit
+		if target_visit == cleared
+		    # Yes, enqueue {target} onto {queue}:
+		    target.visit := queued
+		    call append@(queue, target)
+		else_if target_visit != queued
+		    # This should never happen:
+		    assert 0f
+		# else  {target} is already on {queue} somewhere:
+
+	    index := index + 1
+
+    # Prepare {path} to contain the final sequence of {Way}'s from
+    # {from_way} to {to_way}:
+    path :@= map.path
+    call trim@(path, 0)
+
+    # Now we get to pull out the {Way} path in reverse staring from {to_way}:
+    last_way :@= to_way
+    while 1t
+	# Load {last} onto {path}:
+	call append@(path, last_way)
+
+	# Stop when we get to {from_way}:
+	if last_way == from_way
+	    break
+
+	# Move onto the next {Way}:
+	last_way := last_way.path_back
+
+    # Finally reverse {path} to get it into the correct order:
+    call reverse@(path)
+
+    # To debug, change 0f to 1t:
+    if trace
+	temporary1 :@= map.temporary1
+	call trim@(temporary1, 0)
+	size := path.size
+	index := 0
+	while index < size
+	    if index != 0
+		call character_append@(temporary1, ' ')
+	    call string_append@(temporary1, form@("%w%") / f@(path[index]))
+	    index := index + 1
+
+	call d@(form@("%p%<=path_find@Map(%w%, %w%) => [%s%]\n\") %
+	  f@(indent) % f@(from_way) % f@(to_way) / f@(temporary1))
+
+    return path
+
+
+routine robot_read@Map
+    takes map Map
+    takes xml_file_name String
+    returns Constants
+
+    # This routine will read in a robot configuation from the file named
+    # {xml_file_name}.  The map information is read into {map} and the
+    # constants are returned.  {null@Constants} is returned if the
+    # read fails.
+
+    constants :@= null@Constants
+
+    xml_in_stream :@= open@In_Stream(xml_file_name)
+    if xml_in_stream == null@In_Stream
+	call d@(form@("Unable to open %v%\n\") / f@(xml_file_name))
+    else
+	assert !xml_tag_match@(xml_in_stream, "Robot")
+	assert !xml_tag_end@(xml_in_stream, 0f)
+	constants := xml_read@Constants(xml_in_stream)
+	call xml_read@(map, xml_in_stream, 0xffffff00)
+	assert !xml_tag_match@(xml_in_stream, "/Robot")
+	assert !xml_tag_end@(xml_in_stream, 0f)
+	call close@(xml_in_stream)
+    return constants
+
+
+routine show@Map
+    takes map Map
+    returns_nothing
+
+    # This routine will show the contents of {map}.
+
+    # Make sure {tags} are sorted:
+    tags :@= map.tags
+    call sort@(tags, compare@Tag)
+
+    # Output each {tag} in {tags}:
+    size :@= tags.size
+    index :@= 0
+    while index < size
+	tag :@= tags[index]
+	call show@(tag)
+	index := index + 1
+
+
+routine send@Map
+    takes map Map
+    takes stream Unix_Dispatch[Globals]
+    takes from String
+    returns_nothing
+
+    # This routine will send {map} to {stream}.
+
+    # Use {pi} to convert between radians and degrees:
+    pi :@= map.pi
+
+    # We need to collect all the {Tag_Neighbor}'s into {neighbors}:
+    neighbors :@= map.neighbors
+    call trim@(neighbors, 0)
+    tags :@= map.tags
+    size :@= tags.size
+    index :@= 0
+    while index < size
+	tag :@= tags[index]
+	call array_append@(neighbors, tag.neighbors)
+	index := index + 1
+
+    # We need to collect all of the {Path_Segments}'s into {segments}:
+    segments :@= map.segments
+    call trim@(segments, 0)
+    ways :@= map.ways
+    size := ways.size
+    index := 0
+    while index < size
+	way :@= ways[index]
+	call array_append@(segments, way.segments)
+	index := index + 1
+    
+    # Get everything sorted:
+    call sort@(tags, compare@Tag)
+    call sort@(neighbors, compare@Tag_Neighbor)
+    call sort@(ways, compare@Way)
+    call sort@(segments, compare@Path_Segment)
+
+    # A {Path_Segment} object connects two {Way} objects.  Thus, the
+    # same {Path_Segment} is located on the segments list of each of
+    # each of its associated {Way} objects.  When all of the {Path_Segment}
+    # objects were collected together, there is ultimately a duplicate
+    # of each {Path_Segment} object.  The sort routine put these objects
+    # next to one another.  They are easily culled out using the {unique}()
+    # routine:
+    call unique@(segments, identical@Path_Segment)
+
+    # Send {tags}:
+    size := tags.size
+    index := 0
+    while index < size
+	tag :@= tags[index]
+	call write@(stream, form@("tag %d% %2f% %2f% %2f% %4f%\n\") %
+	  f@(tag.id) % f@(tag.x) % f@(tag.y) % f@(tag.bearing * 180.0 / pi) /
+	  f@(tag.edge_length))
+	index := index +1
+
+    # Send {neighbors}:
+    size := neighbors.size
+    index := 0
+    while index < size
+	neighbor :@= neighbors[index]
+	call write@(stream,
+	  form@("neighbor %d% %d% %2f% %2f% %2f% %2f%\n\") %
+	  f@(neighbor.origin.id) % f@(neighbor.target.id) %
+	  f@(neighbor.target_twist * 180.0 / pi) %
+	  f@(neighbor.target_angle * 180.0 / pi) %
+	  f@(neighbor.target_distance) / f@(neighbor.goodness_metric))
+	index := index + 1
+
+    # Send {ways}:
+    size := ways.size
+    index := 0
+    while index < size
+	way :@= ways[index]
+	call write@(stream,
+	  form@("way %d% %d% %2f% %2f% %2f% %v% %2f% %2f% %2f% %v%\n\") %
+	  f@(way.tag.id) % f@(way.id) % f@(way.dx) % f@(way.dy) %
+	  f@(way.angle * 180.0 / pi) % f@(way.name) %
+	  f@(way.height) % f@(way.open_width) % f@(way.close_width) /
+	  f@(way.flags))
+	index := index + 1
+
+    # Send {segments}:
+    size := segments.size
+    #call d@(form@("segments.size=%d%\n\") / f@(size))
+    index := 0
+    while index < size
+	segment :@= segments[index]
+	way1 :@= segment.way1
+	way2 :@= segment.way2
+	call write@(stream, form@("segment %d% %d% %d% %d%\n\") %
+	  f@(way1.tag.id) % f@(way1.id) % f@(way2.tag.id) / f@(way2.id))
+	index := index + 1
+
+    # Let the recipient know that we are done:
+    call write@(stream, "map_ready\n\")
+
+
+routine segment_delete_parse@Map
+    takes map Map
+    takes line String
+    returns_nothing
+
+    # This routine will parse "way1_tag_id way1_id way2_tag_id way2_id"
+    # from {line}, delete the segment that connects the two.
+
+    # Parse {way1_tag_id}, {way1_id}, {way2_tag_id}, and {way2_id}:
+    way1_tag_id :@= unsigned_lop@(line)
+    way1_id :@= unsigned_lop@(line)
+    way2_tag_id :@= unsigned_lop@(line)
+    way2_id :@= unsigned_lop@(line)
+
+    #call d@(form@(
+    #  "=>segment_delete_parse@Map: t1=%d% w1=%d% t2=%d% w2=%d%\n\") %
+    #  f@(way1_tag_id) % f@(way1_id) % f@(way2_tag_id) / f@(way2_id))
+
+    # Lookup {tag1}, {tag2}, {way1}, and {way2}:
+    tag1 :@= tag_lookup@(map, way1_tag_id, "segment_delete_parse@Map 1")
+    tag2 :@= tag_lookup@(map, way2_tag_id, "segment_delete_parse@Map 2")
+
+    # Now lookup {way1} and {way2}:
+    way1 :@= way_lookup@(tag1, way1_id, "segment_delete_parse@Map 1")
+    way2 :@= way_lookup@(tag2, way2_id, "segment_delete_parse@Map 2")
+
+    # Now delete the segment that connects {way1} to {way2}:
+    call segment_break@(way1, way2)
+
+    # Now store the information about the deleted segment back into {map}
+    # so it can be forwarded to another node:
+    map.segment_way1_tag_id := way1_tag_id
+    map.segment_way1_id := way1_id
+    map.segment_way2_tag_id := way2_tag_id
+    map.segment_way2_id := way2_id
+
+    #call d@(form@(
+    #  "<=segment_delete_parse@Map: t1=%d% w1=%d% t2=%d% w2=%d%\n\") %
+    #  f@(way1_tag_id) % f@(way1_id) % f@(way2_tag_id) / f@(way2_id))
+
+
+routine segment_create_parse@Map
+    takes map Map
+    takes line String
+    takes indent Unsigned
+    returns_nothing
+
+    # This routine will parse "way1_tag_id way1_id way2_tag_id way2_id"
+    # from {line}, create segment that connects the two.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>segment_create_parse@Map(*, %v%)\n\") %
+	  f@(indent) / f@(line))
+    indent1 :@= indent + 1
+
+    # Parse {id}, {x}, {y}, and {angle_degrees} from {line}:
+    way1_tag_id :@= unsigned_lop@(line)
+    way1_id :@= unsigned_lop@(line)
+    way2_tag_id :@= unsigned_lop@(line)
+    way2_id :@= unsigned_lop@(line)
+
+    # Extract {tag1}, {way1}, {tag2}, {way2} from {map}:
+    tag1 :@= tag_lookup@(map, way1_tag_id, "segment_create_parse@Map 1")
+    way1 :@= way_lookup@(tag1, way1_id, "segment_create_parse@Map 1")
+    tag2 :@= tag_lookup@(map, way2_tag_id, "segment_create_parse@Map 2")
+    way2 :@= way_lookup@(tag2, way2_id, "segment_create_parse@Map 2")
+
+    if trace
+	call d@(form@("%p%before: way1.segments1.size=%d%\n\") %
+	  f@(indent) / f@(way1.segments.size))
+	call d@(form@("%p%before: way2.segments2.size=%d%\n\") %
+	  f@(indent) / f@(way2.segments.size))
+
+    # Connect {way1} and {way2} with a path segment:
+    call segment_join@(way1, way2, indent1)
+
+    #FIXME: What does this do!!!
+    # Now store the information about the deleted segment back into {map}
+    # so it can be forwarded to another node:
+    map.segment_way1_tag_id := way1_tag_id
+    map.segment_way1_id := way1_id
+    map.segment_way2_tag_id := way2_tag_id
+    map.segment_way2_id := way2_id
+
+    if trace
+	call d@(form@("%p%after: way1.segments.size=%d%\n\") %
+	  f@(indent) / f@(way1.segments.size))
+	call d@(form@("%p%after: way2.segments.size=%d%\n\") %
+	  f@(indent) / f@(way2.segments.size))
+	call d@(form@("%p%<=segment_create_parse@Map(*, %v%)\n\") %
+	  f@(indent) / f@(line))
+
+
+routine tag_create@Map
+    takes map Map
+    takes id Unsigned
+    takes x Double
+    takes y Double
+    takes angle Double
+    takes edge_length Double
+    takes from String
+    returns Tag
+
+    # This routine will create and return a new {Tag} that contains {id},
+    # {x}, {y}, {angle}, and {edge_length} and install in into {map}.
+
+    #call d@(form@(
+    #  "=>tag_create@Map(*, id=%d%, x=%2f%, y=%2f%, an=%2f%, e=%2f%, %v%)\n\") %
+    #  f@(id) % f@(x) % f@(y) % f@(angle * 180.0 / map.pi) % f@(edge_length) /
+    # f@(from))
+
+    # Create {tag} containing appropriate values:
+    tag :@= create@Tag(id, x, y, angle, edge_length, map)
+
+    # Insert {tag} into {tags_table}:
+    tags_table :@= map.tags_table
+    assert !insert@(tags_table, id, tag)
+
+    # Keep a list of all {tags} and a list of changed tags:
+    call append@(map.tags, tag)
+    call append@(map.tags_changed, tag)
+    map.changed := map.changed + 1
+
+    map.changed := map.changed + 1
+    call map.tag_updated(tag, "update@Tag")
+
+    #call d@(form@(
+    #  "<=tag_create@Map(*, %d%, %2f%, %2f%, %2f%, %2f%, %v%) => %t%\n\") %
+    #  f@(id) % f@(x) % f@(y) % f@(angle * 180.0 / map.pi) % f@(edge_length) %
+    #  f@(tag) / f@(from))
+
+    return tag
+
+
+routine tag_create_parse@Map
+    takes map Map
+    takes line String
+    returns Tag
+
+    # This routine will parse "id x y angle" from {line}, create a {Tag},
+    # and insert it into {map}.
+
+    # Parse {id}, {x}, {y}, {angle}, and {edge_length} from {line}:
+    id :@= unsigned_lop@(line)
+    x :@= double_lop@(line)
+    y :@= double_lop@(line)
+    angle :@= double_lop@(line) * map.pi / 180.0
+    edge_length :@= double_lop@(line)
+    assert edge_length > 0.0
+
+    # Create and return {tag}:
+    assert !tag_exists@(map, id)
+    tag :@= tag_create@(map, id, x, y, angle, edge_length, "tag_create_parse")
+    return tag
+
+
+routine tag_exists@Map
+    takes map Map
+    takes id Unsigned
+    returns Logical
+
+    # This routine will return {true@Logical} if tag {id} is in {map} and
+    # {false@Logical} otherwise.
+
+    return is_in@(map.tags_table, id)
+
+
+routine tag_lookup@Map
+    takes map Map
+    takes id Unsigned
+    takes from String
+    returns Tag
+
+    # This routine will return the {Tag} associated with {id} in {map}.
+
+    tags_table :@= map.tags_table
+    tag :@= lookup@(tags_table, id)
+    if tag == null@Tag
+	call d@(form@("Could not find tag %d% (from %v%)\n\") %
+	  f@(id) / f@(from))
+	assert 0f
+    return tag
+
+
+routine tag_updated_nop@Map
+    takes tag Tag
+    takes from String
+    returns_nothing
+
+    # This routine is called whenever {tag} is updated.  This routine
+    # can be replaced in {Map}.
+
+    #call d@(form@("tag_updated_nop@Map(%d%, %v%)\n\") % f@(tag.id) / f@(from))
+
+
+routine way_delete_parse@Map
+    takes map Map
+    takes line String
+    returns Way
+
+    # This routine will parse "way_tag_id way_id" and delete the corresponding
+    # {Way} from {map}.  The deleted {Way} is returned, but it is no longer
+    # attached to its {Tag}.
+
+    # Parse {way_tag_id} and {way_id}:
+    way_tag_id :@= unsigned_lop@(line)
+    way_id :@= unsigned_lop@(line)
+    #call d@(form@("[D]elete Way: %d% %d%\n\") % f@(way_tag_id) / f@(way_id))
+
+    # Lookup {tag} and {way}:
+    tag :@= tag_lookup@(map, way_tag_id, "way_delete_parse@Map")
+    way :@= way_lookup@(tag, way_id, "way_delete_parse@Map")
+
+    # Now delete {way}:
+    call way_delete@(tag, way)
+
+    return way
+
+routine way_create_parse@Map
+    takes map Map
+    takes line String
+    returns Way
+
+    # This routine will parse "tag_id way_id dx dy angle" from {line},
+    # create a {Tag}, and insert it into {map}.
+
+    # Parse {tag_id}, {way_id}, {dx}, {dy}, and {angle_degrees}:
+    tag_id :@= unsigned_lop@(line)
+    way_id :@= unsigned_lop@(line)
+    dx :@= double_lop@(line)
+    dy :@= double_lop@(line)
+    angle :@= double_lop@(line) * map.pi / 180.0
+    name :@= string_lop@(line, null@String, "way_create_parse 1")
+    height :@= double_lop@(line)
+    open_width :@= double_lop@(line)
+    close_width :@= double_lop@(line)
+    flags :@= string_lop@(line, null@String, "way_create_parse 2")
+
+    call d@(form@(
+      "=>way_create_parse: tid=%d% wid=%d% dx=%2f% dy=%2f% a=%2f% nm=%v%\n\") %
+      f@(tag_id) % f@(way_id) % f@(dx) % f@(dy) % f@(angle * 180.0 / map.pi) /
+      f@(name))
+
+    # Look up {tag} and {way}:
+    way :@= null@Way
+    tag :@= tag_lookup@(map, tag_id, "way_create_parse@Map")
+    if way_exists@(tag, way_id)
+	# Update {way}:
+	way := way_lookup@(tag, way_id, "way_create_parse@Map")
+	call update@(way, dx, dy,
+	  angle, name, height, open_width, close_width, flags)
+    else
+	way := create@Way(angle,
+	  close_width, dx, dy, flags, height, way_id, name, open_width, tag)
+
+    return way
+
+
+routine way_name_lookup@Map
+    takes map Map
+    takes way_name String
+    returns Way
+
+    # This routine will lookup the {Way} associated with {way_name} in {map}.
+
+    way :@= null@Way
+    ways :@= map.ways
+    size :@= ways.size
+    index :@= 0
+    while index < size
+	way := ways[index]
+	if equal@(way_name, way.name)
+	    break
+	way := null@Way
+	index := index + 1
+
+    return way
+
+routine xml_read@Map
+    takes map Map
+    takes xml_stream In_Stream
+    takes indent Unsigned
+    returns_nothing
+
+    # This will read in the tags from {xml_stream} and insert them
+    # into {map}.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>xml_read@Map()\n\") / f@(indent))
+    indent1 :@= indent + 1
+
+    temporary1 :@= map.temporary1
+    temporary2 :@= map.temporary2
+
+    big :@= 123456789
+    neighbors_size :@= big
+    segments_size :@= big
+    tags_size :@= big
+    ways_size :@= big
+
+    # Read in <Map ...>"
+    assert !xml_tag_match@(xml_stream, "Map")
+    while !xml_attribute_read@(xml_stream, temporary1, temporary2) &&
+      temporary1.size != 0
+	if equal@(temporary1, "Neighbors_Size")
+	    neighbors_size := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Segments_Size")
+	    segments_size := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Tags_Size")
+	    tags_size := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Ways_Size")
+	    ways_size := unsigned_convert@(temporary2)
+	else
+	    call d@(form@("Bad attribute=%v%\n\") / f@(temporary1))
+	    assert 0f
+    assert !xml_tag_end@(xml_stream, 0f)
+
+    # Make sure we got all of the sizes:
+    assert neighbors_size != big
+    assert tags_size != big
+    assert segments_size != big
+    assert ways_size != big
+
+    # Read in each <Tag .../>:
+    index :@= 0
+    while index < tags_size
+	tag :@= xml_read@Tag(map, xml_stream)
+	index := index + 1
+
+    # Read in each <Neighbor .../>:
+    index := 0
+    while index < neighbors_size
+	neighbor :@= xml_read@Tag_Neighbor(map, xml_stream)
+	index := index + 1
+
+    # Read in each <Way .../>:
+    index := 0
+    while index < ways_size
+	way :@= xml_read@Way(map, xml_stream)
+	index := index + 1
+
+    # Read in each <Segment .../>:
+    index := 0
+    while index < segments_size
+	segment :@= xml_read@Path_Segment(map, xml_stream, indent1)
+	index := index + 1
+
+    # Read in </Map>:
+    assert !xml_tag_match@(xml_stream, "/Map")
+    assert !xml_tag_end@(xml_stream, 0f)
+
+    if trace
+	call d@(form@("%p%<=xml_read@Map()\n\") / f@(indent))
+
+
+routine xml_write@Map
+    takes map Map
+    takes indent Unsigned
+    takes xml_stream Out_Stream
+    returns_nothing
+
+    # This routine will write out {map} to {xml_stream} indented by
+    # {indent}.
+
+    # All nested XML tags are indented by {indent1}:
+    indent1 :@= indent + 1
+
+    # We need to collect all the {Tag_Neighbor}'s into {neighbors}:
+    neighbors :@= map.neighbors
+    call trim@(neighbors, 0)
+    tags :@= map.tags
+    size :@= tags.size
+    index :@= 0
+    while index < size
+	tag :@= tags[index]
+	call array_append@(neighbors, tag.neighbors)
+	index := index + 1
+
+    # We need to collect all of the {Path_Segments}'s into {segments}:
+    segments :@= map.segments
+    call trim@(segments, 0)
+    ways :@= map.ways
+    size := ways.size
+    index := 0
+    while index < size
+	way :@= ways[index]
+	call array_append@(segments, way.segments)
+	index := index + 1
+    
+    # Get everything sorted:
+    call sort@(tags, compare@Tag)
+    call sort@(neighbors, compare@Tag_Neighbor)
+    call sort@(ways, compare@Way)
+    call sort@(segments, compare@Path_Segment)
+
+    # A {Path_Segment} object connects two {Way} objects.  Thus, the
+    # same {Path_Segment} is located on the segments list of each of
+    # each of its associated {Way} objects.  When all of the {Path_Segment}
+    # objects were collected together, there is ultimately a duplicate
+    # of each {Path_Segment} object.  The sort routine put these objects
+    # next to one another.  They are easily culled out using the {unique}()
+    # routine:
+    call unique@(segments, identical@Path_Segment)
+
+    # Output "<Map ...>":
+    call put@(form@("%p%<Map") / f@(indent), xml_stream)
+    call put@(form@(" Tags_Size=\dq\%d%\dq\") / f@(tags.size), xml_stream)
+    call put@(form@(" Neighbors_Size=\dq\%d%\dq\") / f@(neighbors.size),
+      xml_stream)
+    call put@(form@(" Ways_Size=\dq\%d%\dq\") / f@(ways.size), xml_stream)
+    call put@(form@(" Segments_Size=\dq\%d%\dq\") / f@(segments.size),
+      xml_stream)
+    call put@(">\n\", xml_stream)
+
+    # Output each {Tag} in {tags}:
+    size := tags.size
+    index := 0
+    while index < size
+	tag :@= tags[index]
+	call xml_write@(tag, indent1, xml_stream)
+	index := index + 1
+
+    # Output each {Tag_Neighbor} in {neighbors}:
+    size := neighbors.size
+    index := 0
+    while index < size
+	neighbor :@= neighbors[index]
+	call xml_write@(neighbor, indent1, xml_stream)
+	index := index + 1
+
+    # Output each {Way} object in {ways}; collect all {segments}:
+    size := ways.size
+    index := 0
+    while index < size
+	way :@= ways[index]
+	call xml_write@(way, indent1, xml_stream)
+	index := index + 1
+    
+    # Output each {Segment} in {segments}:
+    size := segments.size
+    index := 0
+    while index < size
+	segment :@= segments[index]
+	call xml_write@(segment, indent1, xml_stream)
+	index := index + 1
+
+    # Output the closing </Map>:
+    call put@(form@("%p%</Map>\n\") / f@(indent), xml_stream)
+
+    # Clear out {neighbors} and {segments}:
+    call trim@(neighbors, 0)
+    call trim@(segments, 0)
+
+
+# {String} routines:
+
+routine double_lop@String
+    takes buffer String
+    returns Double
+
+    # This routine will remove an {Double} from the front of {buffer}.
+
+    call white_space_lop@(buffer, null@String)
+
+    result :@= double_convert@(buffer)
+
+    # Now lop off everything that looks like a floating point number:
+    while buffer.size != 0
+	character :@= buffer[0]
+	if is_decimal_digit@(character) || character = '.' ||
+	  character = '-' || character = '+' || character = 'e' ||
+	  character = 'E'
+	    call lop@(buffer)
+	else
+	    break
+
+    return result
+
+
+routine hex_integer_lop@String
+    takes buffer String
+    returns Integer
+
+    # This routine will remove an {Integer} from the front of {buffer}.
+
+    result :@= 0i
+
+    call white_space_lop@(buffer, null@String)
+
+    negative :@= 0f
+    if buffer.size != 0 && buffer[0] = '-'
+	negative := 1t
+	call lop@(buffer)
+
+    while buffer.size != 0
+	character :@= buffer[0]
+	if is_hex_digit@(character)
+	    call lop@(buffer)
+	    result := (result << 4i) | integer@(hexadecimal_convert@(character))
+	else
+	    break
+
+    if negative
+	result := -result
+
+    return result
+
+
+routine integer_lop@String
+    takes buffer String
+    returns Integer
+
+    # This routine will remove an {Integer} from the front of {buffer}.
+
+    result :@= 0i
+    call white_space_lop@(buffer, null@String)
+
+    negative :@= 0f
+    if buffer.size != 0 && buffer[0] = '-'
+	negative := 1t
+	call lop@(buffer)
+
+    while buffer.size != 0
+	character :@= buffer[0]
+	if is_decimal_digit@(character)
+	    call lop@(buffer)
+	    result := result * 10i + integer@(decimal_convert@(character))
+	else
+	    break
+
+    if negative
+	result := -result
+
+    return result
+
+
+routine string_lop@String
+    takes buffer String
+    takes temporary String
+    takes from String
+    returns String
+
+    # This routine will remove a {String} from the front of {buffer}.
+
+    return_copy :@= 0f
+    if temporary == null@String
+	temporary := new@String()
+    else
+	call trim@(temporary, 0)
+	return_copy := 1t
+    call white_space_lop@(buffer, null@String)
+    if buffer.size != 0
+	quote :@= lop@(buffer)
+	if quote = '"' || quote = '\sq\'
+	    while buffer.size != 0
+		character :@= lop@(buffer)
+		if character = quote
+		    break
+		call character_append@(temporary, character)
+	else
+	    call d@(form@("Unable to parse string from %v% (%v%)\n\") %
+	      f@(buffer) / f@(from))
+    if return_copy
+	temporary := read_only_copy@(temporary)
+    return temporary
+
+
+routine unsigned_lop@String
+    takes buffer String
+    returns Unsigned
+
+    # This routine will remove an {Unsigned} from the front of {buffer}.
+
+    result :@= 0
+    call white_space_lop@(buffer, null@String)
+    while buffer.size != 0
+	character :@= buffer[0]
+	if is_decimal_digit@(character)
+	    call lop@(buffer)
+	    result := result * 10 + decimal_convert@(character)
+	else
+	    break
+    return result
+
+
+# {Tag} routines:
+
+routine buffer_append@Tag
+    takes tag Tag
+    takes buffer String
+    returns_nothing
+
+    # This routine will append information about {tag} to {buffer}.
+
+    call string_append@(buffer, form@("Tag%d%") / f@(tag.id))
+
+
+routine closest_way@Tag
+    takes tag Tag
+    takes x Double
+    takes y Double
+    returns Way
+
+    # This routine will return the {Way} that is closest to {tag}.
+
+    return closest_way@(tag.map, x, y)
+
+# {closest_way@Tag}() used to be trickier.  It turns out "tricky" does
+# not work.  It is necessary to find the actualy closest way.
+
+#    # Set {closest_distance} to a large number so that the first
+#    # distance we find will replace it:
+#    closest_distance :@= 987654321.0
+#    closest_way :@= null@Way
+#
+#    # We will search for a closest way in {tag} first and if that fails
+#    # we will search all of the available ways.  If there is no {Way}
+#    # at all, {null@Way} is returned.
+#
+#
+#
+#    # First search {tag.ways}.  Failing that, search {tag.map.ways}:
+#    search :@= 0
+#    while closest_way == null@Way && search < 2
+#	ways :@= tag.ways
+#	if search > 0
+#	    # Search all ways:
+#	    ways := tag.map.ways
+#
+#	# Iterate over each {way} in {ways}:
+#	size :@= ways.size
+#	index :@= 0
+#	while index < size
+#	    way :@= ways[index]
+#
+#	    # Compute way offset from ({x},{y}):
+#	    way_tag :@= way.tag
+#	    dx :@= x - (way_tag.x + way.dx)
+#	    dy :@= y - (way_tag.y + way.dy)
+#
+#	    # Compute distance:
+#	    distance :@= square_root@(dx * dx + dy * dy)
+#
+#	    # See if {way} is closer:
+#	    if distance < closest_distance
+#		# {way} is closer:
+#		closest_distance := distance
+#		closest_way := way
+#
+#	    index := index + 1
+#	search := search + 1
+#
+#    #call d@(form@("closest_way@Tag(t=%d%, %2f%, %2f%) => %d%:%d%:%s%\n\") %
+#    #  f@(tag.id) % f@(x) % f@(y) %
+#    #  f@(closest_way.tag.id) % f@(closest_way.id) / f@(closest_way.name))
+#
+#    return closest_way
+
+
+routine compare@Tag
+    takes tag1 Tag
+    takes tag2 Tag
+    returns Integer
+
+    # This routine will return -1, 0, or 1 depending upon whether {tag1}
+    # should occur before, at, or after {tag2}.
+
+    return compare@(tag1.id, tag2.id)
+
+
+routine create@Tag
+    takes id Unsigned
+    takes x Double
+    takes y Double
+    takes bearing Double
+    takes edge_length Double
+    takes map Map
+    returns Tag
+
+    # This routine will create and return a new {Tag} object that contains
+    # {id}, {x}, {y}, {bearing}, and {edge_length}.  The returned {Tag} is
+    # associated with {map}.   This routine should only be called from
+    # {tag_create@Map}().
+
+    # Use {pi} to for {angle} limits and conversions (radians):
+    pi :@= map.pi
+
+    #call d@(form@("=>create@Tag(%d%, %2f%, %2f%, %2f%, *)\n\") %
+    #  f@(id) % f@(angle * 180.0 / pi) % f@(x) / f@(y))
+
+    # Just to make sure:
+    assert 1 <= id && id <= 0xffff
+    assert -pi <= bearing && bearing <= pi
+    assert x < 100000.0
+    assert y < 100000.0
+    assert edge_length < 100000.0
+
+    # Create the 4 {Tag_Corner} objects and stuff them into {corners}:
+    corners :@= new@Array[Tag_Corner]()
+    call append@(corners, new@Tag_Corner())
+    call append@(corners, new@Tag_Corner())
+    call append@(corners, new@Tag_Corner())
+    call append@(corners, new@Tag_Corner())
+
+    # Create {tag} and fill it in:
+    tag :@= new@Tag()
+    tag.bearing := bearing
+    tag.diagonal := 0.0
+    tag.edge_length := edge_length
+    tag.id := id
+    tag.map := map
+    tag.xx := x
+    tag.yy := y
+    tag.corners := corners
+    tag.neighbors := new@Array[Tag_Neighbor]()
+    tag.neighbors_sorted := 0f
+    tag.ways := new@Array[Way]()
+
+    # Now mark {tag} as updated:
+    call append@(map.tags_changed, tag)
+    call map.tag_updated(tag, "tag_create@Map")
+
+    #call d@(form@("<=create@Tag(%d%, %2f%, %2f%, %2f%, *)=>%t%\n\") %
+    #  f@(id) % f@(angle * 180.0 / pi) % f@(x) % f@(y) / f@(tag))
+
+    return tag
+
+
+routine equal@Tag
+    takes tag1 Tag
+    takes tag2 Tag
+    returns Logical
+
+    # This routine will return {true@Logical} if {tag1} is equal to {tag2}
+    # {false@Logical} otherwise.
+
+    return compare@(tag1, tag2) = 0i
+
+
+routine f@Tag
+    takes tag Tag
+    returns String
+
+    # This routine will format {tag} into a {String}.
+
+    value :@= field_next@Format()
+    call trim@(value, 0)
+
+    pi :@= 3.14159265358979323846
+    call string_append@(value,
+      form@("{id=%d% x=%2f% y=%2f% bearing=%2f% dir=%d%}") %
+      f@(tag.id) % f@(tag.x) % f@(tag.y) %
+      f@(tag.bearing * 180.0 / pi) / f@(tag.direction))
+    return value
+
+
+routine x_get@Tag
+    takes tag Tag
+    returns Double
+
+    # This routine will return the X value for {tag}.
+
+    return tag.xx
+
+
+routine y_get@Tag
+    takes tag Tag
+    returns Double
+
+    # This routine will return the Y value for {tag}.
+
+    return tag.yy
+
+
+routine map_update@Tag
+    takes tag Tag
+    takes x Double
+    takes y Double
+    takes bearing Double
+    takes edge_length Double
+    takes visit Unsigned
+    takes from String
+    takes indent Unsigned
+    returns_nothing
+
+    # This routine will update {tag} to have a position of ({x},{y}) and
+    # a {bearing} angle relative to the floor coordinate X axis.
+    # This only happens if {tag.visit} is less than {visit}.  In addition,
+    # all neighbors of {tag} are visited to update position and bearing.
+
+    map :@= tag.map
+    pi :@= map.pi
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@(
+	  "%p%=>map_update@Tag(%d%, %2f%, %2f%, %2f%, %d%, %v%)\n\") %
+	  f@(indent) % f@(tag.id) % f@(x) % f@(y) %
+	  f@(bearing * 180.0 / pi) % f@(visit) / f@(from))
+    indent1 :@= indent + 1
+
+    # Do we need to update {tag}?:
+    if tag.visit < visit
+	# Yes, we do.  Update the map fields:
+	tag.visit := visit
+	call update@(tag, x, y, bearing, edge_length, "map_update@Tag", indent1)
+
+	# Make sure that {neighbors} is sorted:
+	neighbors :@= tag.neighbors
+	if !tag.neighbors_sorted
+	    # Sort {neighbors} and remember that we did so:
+	    call sort@(neighbors, compare@Tag_Neighbor_Shortest)
+	    tag.neighbors_sorted := 1t
+
+	# Now visit each {Tag_Neighbor} in {neighbors}:
+	size :@= neighbors.size
+	index :@= 0
+	while index < size
+	    neighbor :@= neighbors[index]
+
+	    if trace
+		call d@(form@("%p%[%d%]: T%d% => T%d%\n\") %
+		  f@(indent1) % f@(index) % f@(tag.id) /
+		  f@(neighbor.target.id))
+
+	    # {target_bearing} is the absolute direction of the bottom
+	    # edge of the target in floor coordinates:
+	    target_bearing :@= angle_normalize@(bearing + neighbor.target_twist)
+	    if trace
+		call d@(form@(
+		  "%p%bear=%2f% + n.targ_tw=%2f% = targ_bear=%2f%\n\") %
+		  f@(indent1) % f@(bearing * 180.0 / pi) %
+		  f@(neighbor.target_twist * 180.0 / pi) /
+		  f@(target_bearing * 180.0 / pi))
+
+	    # We are at ({x}, {y}) and the new target is placed
+	    # at ({target_x}, {target_y}).
+	    #target_angle :@= target_bearing + neighbor.target_angle
+	    target_angle :@= angle_normalize@(neighbor.target_angle + bearing)
+	    if trace
+		neg_target_angle :@= angle_normalize@(target_angle + pi)
+		call d@(form@(
+		  "%p%n.tar_ang=%2f% - %2f% = tar_ang=%2f%; -tar_ang=%2f%\n\") %
+		  f@(indent1) % f@(neighbor.target_angle * 180.0 / pi) %
+		  f@(bearing * 180.0 / pi) % f@(target_angle * 180.0 / pi) /
+		  f@(neg_target_angle * 180.0 / pi))
+
+	    # Now we can compute ({target_x}, {target_y}):
+	    target_distance :@= neighbor.target_distance
+	    target_x :@= x + target_distance * cosine@(target_angle)
+	    target_y :@= y + target_distance * sine@(target_angle)
+
+	    # Make sure ({target_x},{target_y}) is reasonable:
+	    if target_x > 10000.0 || target_y > 10000.0
+		call d@(form@("map_update@Tag:target_distance=%2f%\n\") /
+		  f@(target_distance))
+		call d@("**************************************************\n\")
+	    else
+		call map_update@(neighbor.target, target_x, target_y,
+		  target_bearing, edge_length, visit,
+		  "map_update@Tag", indent + 1)
+
+	    index := index + 1
+
+    if trace
+	call d@(form@(
+	  "%p%<=map_update@Tag(%d%, %2f%, %2f%, %2f%, %d%, %v%)\n\") %
+	  f@(indent) % f@(tag.id) % f@(x) % f@(y) %
+	  f@(bearing * 180.0 / pi) % f@(visit) / f@(from))
+
+
+routine neighbor_exists@Tag
+    takes tag Tag
+    takes neighbor_tag Tag
+    returns Logical
+
+    # This routine will return {true@Logical} if there is a {Tag_Neighbor}
+    # associated with {neighbor_tag} in {tag}; otherwise {false@Logical} is
+    # returned.
+
+    # Scan through {neighbors} looking for {neighbor_tag}:
+    result :@= 0f
+    neighbors :@= tag.neighbors
+    neighbor :@= null@Tag_Neighbor
+    size :@= neighbors.size
+    index :@= 0
+    while index < size
+	neighbor := neighbors[index]
+	assert neighbor.origin == tag
+	if neighbor.target == neighbor_tag
+	    # We found {neighbor_tag}:
+	    result := 1t
+	    break
+	index := index + 1
+    return result
+
+
+routine neighbor_lookup@Tag
+    takes tag Tag
+    takes neighbor_tag Tag
+    takes from String
+    returns Tag_Neighbor
+
+    # This routine will return the {Tag_Neighbor} associated with
+    # {neighbor_tag} in {tag}.
+
+    # Scan through {neighbors} looking for {neighbor_tag}:
+    neighbors :@= tag.neighbors
+    neighbor :@= null@Tag_Neighbor
+    size :@= neighbors.size
+    index :@= 0
+    while index < size
+	neighbor := neighbors[index]
+	assert neighbor.origin == tag
+	if neighbor.target == neighbor_tag
+	    # We found {neighbor_tag}:
+	    break
+	index := index + 1
+
+    # We fail if we do not find it:
+    if index >= size
+	call d@(form@("neighbor_lookup@Tag(%d%, %d%, %v%) failed\n\") %
+	  f@(tag.id) % f@(neighbor_tag.id) / f@(from))
+	assert 0f
+
+    return neighbor
+
+
+routine pair@Tag
+    takes from Tag
+    takes to Tag
+    takes columns Unsigned
+    takes rows Unsigned
+    takes map Map
+    takes constants Constants
+    takes indent Unsigned
+    returns Unsigned
+
+    # This routine will record that {from} and {to} are close to one
+    # another in the same field of view.  The image has total dimensions of
+    # {columns} x {rows}.  {map} contains all of the {Tag} and {Tag_Neighbor}
+    # objects.  {constants} contains some constants that are needed.
+    # The number of {Tag_Neighbors} changed is returned.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>pair@tag(T%t%, T%t%, %d%, %d%, *)\n\") %
+	  f@(indent) % f@(from.id) % f@(to.id) % f@(columns) / f@(rows))
+    indent1 :@= indent + 1
+
+    # Compute some constants:
+    half_columns :@= double@(columns >> 1)
+    half_rows :@= double@(rows >> 1)
+    pi :@= map.pi
+
+    # Extract some field value from {from} and {to}:
+    from_center_x :@= from.center_x
+    from_center_y :@= from.center_y
+    to_center_x :@= to.center_x
+    to_center_y :@= to.center_y
+
+    # Compute the X and Y distance between the center of the image and the
+    # center of {from} and {to}:
+    fdx :@= half_columns - from_center_x
+    fdy :@= half_rows - from_center_y
+    tdx :@= half_columns - to_center_x
+    tdy :@= half_rows - to_center_y
+
+    # Compute diagonal pixel distance between image center and tag centers:
+    from_distance :@= square_root@(fdx * fdx + fdy * fdy)
+    to_distance :@= square_root@(tdx * tdx + tdy * tdy)
+
+    # To minimize camera distortion, we want to use images where {from}
+    # and {to} are about equidistant from the image center.  This
+    # we want to minimum the absolute value of the distance difference:
+    goodness_metric :@= absolute@(from_distance - to_distance)
+
+    # Now search for {to} to see if {from} is has a pre-existing
+    # {neighbor}.  If not, leave {neighbor} at null:
+    exists :@= 0f
+    neighbor :@= null@Tag_Neighbor
+    if neighbor_exists@(from, to)
+	exists := 1t
+	neighbor := neighbor_lookup@(from, to, "pair@Tag")
+
+    if trace
+	call d@(form@("%p%n_exists=%l% good=%2f% n.good=%2f%\n\") %
+	  f@(indent1) % f@(exists) %
+	  f@(goodness_metric) / f@(neighbor.goodness_metric))
+
+    # Now see if the new {goodness_metric} is better than the previous one:
+    changed :@= 0
+    if neighbor == null@Tag_Neighbor ||
+      goodness_metric < neighbor.goodness_metric
+	# We have a better {goodness_metric}, record new values into {neighbor}:
+
+	# Grab some additional values from {from} and {to}:
+
+	# {neighbor_twist} is normalized angle change in fiducial orientation
+	# from {from} to {to}.
+	from_twist :@= from.twist
+	to_twist :@= to.twist
+	neighbor_twist :@= angle_normalize@(to_twist - from_twist)
+	if trace
+	    call d@(form@(
+	      "%p%f.tw=%2f% t.tw=%2f% n.tw=%2f%\n\") % f@(indent1) %
+	      f@(from_twist     * 180.0 / pi) %
+	      f@(to_twist       * 180.0 / pi) /
+	      f@(neighbor_twist * 180.0 / pi))
+
+	# Compute {inches_per_pixel}:
+	inches_across_frame :@= constants.inches_across_frame
+	inches_per_pixel :@= inches_across_frame / double@(columns)
+	if trace
+	    call d@(form@("%p% ipp=%4f%\n\") %
+	      f@(indent1) / f@(inches_per_pixel))
+
+	# Compute the distance between {orgin} and {to}.
+	dx :@= to_center_x - from_center_x
+	dy :@= to_center_y - from_center_y
+	distance_pixels :@= square_root@(dx * dx + dy * dy)
+	distance_inches :@= distance_pixels * inches_per_pixel
+	if trace
+	    call d@(form@("%p%to_dx=%2f% to_dy=%2f%\n\") %
+	      f@(indent1) % f@(dx) / f@(dy))
+	    call d@(form@(
+	      "%p%dx_pix=%2f% dy_pix=%2f% dist_pix=%2f% dist_in=%2f%\n\") %
+	      f@(indent1) % f@(dx) % f@(dy) % f@(distance_pixels) /
+	      f@(distance_inches))
+
+	# {neighbor_angle} is the angle from bottom edge of {from}
+	# to the center of {to}:
+	spin :@= arc_tangent2@(dy, dx)
+	neighbor_angle :@= angle_normalize@(spin - from_twist)
+	if trace
+	    call d@(form@("%p%spin=%2f% - f.tw=%2f% = n.a=%2f%\n\") %
+	      f@(indent1) %
+	      f@(spin           * 180.0 / pi) %
+	      f@(from_twist     * 180.0 / pi) /
+	      f@(neighbor_angle * 180.0 / pi))
+
+	# Load up {neighbor}:
+	if neighbor == null@Tag_Neighbor
+	    neighbor := create@Tag_Neighbor(from, to,
+	      neighbor_twist, neighbor_angle, distance_inches,
+	      goodness_metric, indent1)
+	else
+	    call update@(neighbor, goodness_metric,
+	      neighbor_twist, neighbor_angle, distance_inches)
+
+	changed := 1
+
+    if trace
+	call d@(form@("%p%<=pair@tag(T%d%, T%d%, %d%, %d%, *) => %d%\n\") %
+	  f@(indent) % f@(from.id) % f@(to.id) % f@(columns) % f@(rows) /
+	  f@(changed))
+
+    return changed
+
+
+routine path_clear@Tag
+    takes tag Tag
+    takes visit Unsigned
+    returns_nothing
+
+    # This routine will recursively clear the distance and back path nodes
+    # of all tags attached to {tag} usinge {visit} to prevent recursion loops.
+
+    # Has this tag been visited yet?
+    if tag.visit != visit
+
+	# Sweep through {neighbors} clearing them out:
+	neighbors :@= tag.neighbors
+	size :@= neighbors.size
+	index :@= 0
+	while index < size
+	    neighbor :@= neighbors[index]
+	    assert neighbor.origin == tag
+	    call path_clear@(neighbor.target, visit)
+	    index := index + 1
+
+
+routine show@Tag
+    takes tag Tag
+    returns_nothing
+
+    # This routine will show the contents of {tag} on the standard output.
+
+    # {pi} is used to convert between degrees and radians:
+    pi :@= tag.map.pi
+
+    # Show {tag}:
+    call d@(form@("Tag: id=%d% x=%2f% y=%2f% angle=%2f%\n\") %
+      f@(tag.id) % f@(tag.x) % f@(tag.y) / f@(tag.bearing * 180.0 / pi))
+
+    # Make sure {ways} are sorted:
+    ways :@= tag.ways
+    call sort@(ways, compare@Way)
+
+    # Show each {way} in {ways}:
+    size :@= ways.size
+    index :@= 0
+    while index < size
+	way :@= ways[index]
+	call show@(way)
+	index := index + 1
+
+
+routine update@Tag
+    takes tag Tag
+    takes x Double
+    takes y Double
+    takes bearing Double
+    takes edge_length Double
+    takes from String
+    takes indent Unsigned
+    returns_nothing
+
+    # This routine will update {tag} to contain {x}, {y}, {bearing}, and
+    # {edge_length}.
+
+    # Grab some values from {tag}:
+    map :@= tag.map
+    pi :@= map.pi
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>update@Tag(%d%, %2f%, %2f%, %2f%, %4f%, %v%)\n\") %
+	  f@(indent) % f@(tag.id) % f@(x) % f@(y) % f@(bearing * 180.0 / pi) %
+	  f@(edge_length) / f@(from))
+
+    # Make sure we have semi-valid values:
+    assert -pi <= bearing && bearing <= pi
+    assert x < 100000.0
+    assert y < 100000.0
+
+    # Only update the contents of {tag} if some value has changed:
+    if tag.xx != x || tag.yy != y ||
+      tag.bearing != bearing || tag.edge_length != edge_length
+	# Load up {tag} with {x}, {y}, {bearing}, and {edge_length}:
+	tag.xx := x
+	tag.yy := y
+	tag.bearing := bearing
+	tag.edge_length := edge_length
+
+	# Inform any interested parties that {tag} has changed:
+	map.changed := map.changed + 1
+	call map.tag_updated(tag, "update@Tag")
+
+    if trace
+	call d@(form@("%p%<=update@Tag(%d%, %2f%, %2f%, %2f%, %4f%, %v%)\n\") %
+	  f@(indent) % f@(tag.id) % f@(x) % f@(y) % f@(bearing * 180.0 / pi) %
+	  f@(edge_length) / f@(from))
+
+
+routine way_delete@Tag
+    takes tag Tag
+    takes way Way
+    returns_nothing
+
+    # This routine will ensure that {way} is not in the way list of {tag}.
+
+    # Scan {ways} for {way}:
+    ways :@= tag.ways
+    size :@= ways.size
+    index :@= 0
+    while index < size
+	if ways[index] == way
+	    # We found {way}, remove it by replacing it with the last
+	    # way in {ways} and reducing {ways} length by 1:
+	    size := size - 1
+	    ways[index] := ways[size]
+	    call trim@(ways, size)
+
+	    # Do not increment {index}, since we want to visit the new value
+	    # that was just stuffed into {index}'th slot of {ways}:
+	else
+	    index := index + 1
+
+    # Now remove the {way} from {map.ways}:
+    ways := tag.map.ways
+    size := ways.size
+    index := 0
+    while index < size
+	if ways[index] == way
+	    # We found {way}, remove it by replacing it with the last
+	    # way in {ways} and reducing {ways} length by 1:
+	    size := size - 1
+	    ways[index] := ways[size]
+	    call trim@(ways, size)
+
+	    # Do not increment {index}, since we want to visit the new value
+	    # that was just stuffed into {index}'th slot of {ways}:
+	else
+	    index := index + 1
+
+
+routine way_exists@Tag
+    takes tag Tag
+    takes way_id Unsigned
+    returns Logical
+
+    # This routine will return {true@Logical} if {way_id} matches a {Way}
+    # in {tag}; otherwise {false@Logical} is returned.
+
+    #call d@(form@("exists@Tag(%d%, %d%)\n\") % f@(tag.id) / f@(way_id))
+
+    result :@= 0f
+    ways :@= tag.ways
+    size :@= ways.size
+    index :@= 0
+    while index < size
+	way :@= ways[index]
+	if way.id = way_id
+	    result := 1t
+	    break
+	index := index + 1
+    return result
+
+
+routine way_lookup@Tag
+    takes tag Tag
+    takes way_id Unsigned
+    takes from String
+    returns Way
+
+    # This routine will return the {Way} associated with {way_id} and {Tag}
+    # in {map}.  If {way_id} does not match a {Way}, this routine will fail.
+
+    #call d@(form@("way_lookup@Tag(%d%, %d%, %s%)\n\") %
+    #  f@(tag.id) % f@(way_id) / f@(from))
+
+    way :@= null@Way
+    ways :@= tag.ways
+    size :@= ways.size
+    index :@= 0
+    while index < size
+	way := ways[index]
+	if way.id = way_id
+	    break
+	index := index + 1
+    assert index < size
+
+    return way
+
+
+routine xml_read@Tag
+    takes map Map
+    takes xml_stream In_Stream
+    returns Tag
+
+    # This routine will read in a {Tag} from {xml_stream} and return it.
+    # The returned {tag} in inserted into {map}.
+
+    temporary1 :@= map.temporary1
+    temporary2 :@= map.temporary2
+
+    # Read the </Tag...>:
+    assert !xml_tag_match@(xml_stream, "Tag")
+
+    # Preload the field values into local variables with bogus values:
+    pi :@= map.pi
+    big :@= map.big
+    bearing :@= big
+    edge_length :@= big
+    edge_length := 7.8125
+    id :@= 0xffffffff
+    x :@= big
+    y :@= big
+
+    # Read all of the attributes:
+    while !xml_attribute_read@(xml_stream, temporary1, temporary2) &&
+      temporary1.size != 0
+	if equal@(temporary1, "Angle")
+	    #FIXME: Angle is depricated!!!:
+	    bearing := double_convert@(temporary2) * pi / 180.0
+	else_if equal@(temporary1, "Bearing")
+	    bearing := double_convert@(temporary2) * pi / 180.0
+	else_if equal@(temporary1, "Edge_Length")
+	    edge_length := double_convert@(temporary2)
+	else_if equal@(temporary1, "Id")
+	    id := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "X")
+	    x := double_convert@(temporary2)
+	else_if equal@(temporary1, "Y")
+	    y := double_convert@(temporary2)
+	else
+	    call d@(form@("field=%v% value=%v%\n\") %
+	      f@(temporary1) / f@(temporary2))
+	    assert 0f
+    assert !xml_tag_end@(xml_stream, 1t)
+
+    # Make sure we got all required fields:
+    assert bearing != big
+    #assert edge_length != big
+    assert id != 0xffffffff 
+    assert x != big
+    assert y != big
+
+    #call d@(form@("xml_read@Tag(): id=%d% nsize=%d% ways_size=%d%\n\") %
+    #  f@(id) % f@(neighbors_size) / f@(ways_size))
+
+    # Create and return the {tag}:
+    tag :@= tag_create@(map, id, x, y, bearing, edge_length, "xml_read@Tag")
+
+    #call d@(form@("xml_read@Tag()=>%t%\n,n\") / f@(tag))
+
+    return tag
+
+
+routine xml_write@Tag
+    takes tag Tag
+    takes indent Unsigned
+    takes xml_stream Out_Stream
+    returns_nothing
+
+    # This routine will write {tag} to {xml_stream} indented by {indent}.
+
+    # Indent <Neighbor> and <Way> tags by a little more:
+    indent1 :@= indent + 1
+
+    pi :@= tag.map.pi
+    #call d@(form@("xml_write@Tag(%i%): bad tag: a=%2f% x=%2f% y=%2f%\n\") %
+    #  f@(tag.id) % f@(tag.angle * 180.0 / pi) % f@(tag.x) / f@(tag.y))
+
+    # Output the <Tag> tag:
+    call put@(form@("%p%<Tag") / f@(indent), xml_stream)
+    call put@(form@(" Id=\dq\%d%\dq\") / f@(tag.id), xml_stream)
+    call put@(form@(" Bearing=\dq\%2f%\dq\") / f@(tag.bearing * 180.0 / pi),
+      xml_stream)
+    call put@(form@(" Edge_Length=\dq\%4f%\dq\") / f@(tag.edge_length),
+      xml_stream)
+    call put@(form@(" X=\dq\%2f%\dq\") / f@(tag.x), xml_stream)
+    call put@(form@(" Y=\dq\%2f%\dq\") / f@(tag.y), xml_stream)
+    call put@("/>\n\", xml_stream)
+
+
+# {Tag_Neighbor} routines:
+
+routine create@Tag_Neighbor
+    takes origin Tag
+    takes target Tag
+    takes target_twist Double
+    takes target_angle Double
+    takes target_distance Double
+    takes goodness_metric Double
+    takes indent Unsigned
+    returns Tag_Neighbor
+
+    # This routine will create and return a new {Tag_Neigbor} object that
+    # contains {origin}, {target}, {target_twist}, {target_angle},
+    # {target_distance} and {goodness_metric}.
+
+    # Extract {map} from {origin}:
+    map :@= origin.map
+    pi :@= map.pi
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@(
+	  "%p%=>create@Tag_N(T%d%, T%d%, tw=%2f%, a=%2f%, d=%2f%, g=%2f%)\n\") %
+	  f@(indent) % f@(origin.id) % f@(target.id) %
+	  f@(target_twist * 180.0 / pi) % f@(target_angle * 180.0 / pi) %
+	  f@(target_distance) / f@(goodness_metric))
+
+    # Make sure we are not creating a duplicate:
+    assert !neighbor_exists@(origin, target)
+
+    # Create and fill in {neighbor}:
+    neighbor :@= new@Tag_Neighbor()
+    neighbor.changed := 1t
+    neighbor.goodness_metric := goodness_metric
+    neighbor.origin := origin
+    neighbor.target := target
+    neighbor.target_angle := target_angle
+    neighbor.target_distance := target_distance
+    neighbor.target_twist := target_twist
+
+    # Remember that {neighbor} has changed.
+    call append@(map.neighbors_changed, neighbor)
+    map.changed := map.changed + 1
+
+    # Append {neighbor} to {origin.neighbors} and mark that it is no
+    # longer sorted:
+    call append@(origin.neighbors, neighbor)
+    origin.neighbors_sorted := 0f
+
+    # Supply notification that {neighbor has changed}:
+    call map.neighbor_updated(neighbor)
+
+    if trace
+	call d@(form@(
+	  "%p%=>create@Tag_N(T%d%, T%d%, tw=%2f%, a=%2f%, d=%2f%, g=%2f%)\n\") %
+	  f@(indent) % f@(origin.id) % f@(target.id) %
+	  f@(target_twist * 180.0 / pi) % f@(target_angle * 180.0 / pi) %
+	  f@(target_distance) / f@(goodness_metric))
+    return neighbor
+
+
+routine compare@Tag_Neighbor
+    takes neighbor1 Tag_Neighbor
+    takes neighbor2 Tag_Neighbor
+    returns Integer
+
+    # This routine will return -1, 0, or 1 depending upon whether {neighbor1}
+    # should occur before, at, or after {neighbor2}.  Sort or origin tag
+    # id first, followed by target id.
+
+    result :@= compare@(neighbor1.origin.id, neighbor2.origin.id)
+    if result = 0i
+	result := compare@(neighbor1.target.id, neighbor2.target.id)
+    return result
+
+
+routine compare@Tag_Neighbor_Shortest
+    takes neighbor1 Tag_Neighbor
+    takes neighbor2 Tag_Neighbor
+    returns Integer
+
+    # This routine will return -1, 0, or 1 depending upon whether {neighbor1}
+    # should occur before, at, or after {neighbor2}.  Sort on target distance
+    # first, origin tag id second, followed by target id third.
+
+    result :@= compare@(neighbor1.target_distance, neighbor2.target_distance)
+    if result = 0i
+	result := compare@(neighbor1, neighbor2)
+    return result
+
+
+routine equal@Tag_Neighbor
+    takes neighbor1 Tag_Neighbor
+    takes neighbor2 Tag_Neighbor
+    returns Logical
+
+    # This routine will return {true@Logical} if {neighbor1} equals {neighbor2}
+    # and {false@Logical} otherwise.
+
+    return compare@(neighbor1, neighbor2) = 0i
+
+
+routine f@Tag_Neighbor
+    takes neighbor Tag_Neighbor
+    returns String
+
+    # This routine will format {neighbor} as a {String} and return it.
+
+    value :@= field_next@Format()
+    call trim@(value, 0)
+
+    pi :@= 3.14159265358979323846
+
+    call string_append@(value,
+      form@("%d%=>%d% dist=%f% twist=%f% angle=%f% good=%f%") %
+      f@(neighbor.origin.id) % f@(neighbor.target.id) %
+      f@(neighbor.target_distance) % f@(neighbor.target_twist * 180.0 / pi) %
+      f@(neighbor.target_angle * 180.0 / pi) / f@(neighbor.goodness_metric))
+    return value
+
+
+routine update@Tag_Neighbor
+    takes neighbor Tag_Neighbor
+    takes goodness_metric Double
+    takes target_twist Double
+    takes target_angle Double
+    takes target_distance Double
+    returns_nothing
+
+    # This routine will update the contents of {neighbor} to contain
+    # {goodness_metric}, {target_twist}, {target_angle} and {target_distance}.
+
+    # See if any fields have changed:
+    if neighbor.goodness_metric != goodness_metric ||
+      neighbor.target_twist != target_twist ||
+      neighbor.target_angle != target_angle ||
+      neighbor.target_distance != target_distance
+	# They have changed; fill them in:
+	neighbor.goodness_metric := goodness_metric
+	neighbor.target_angle := target_angle
+	neighbor.target_distance := target_distance
+	neighbor.target_twist := target_twist
+
+	# Perform any requested callback:
+	map :@= neighbor.origin.map
+	map.changed := map.changed + 1
+	neighbor.changed := 1t
+	call map.neighbor_updated(neighbor)
+
+
+routine xml_read@Tag_Neighbor
+    takes map Map
+    takes xml_stream In_Stream
+    returns Tag_Neighbor
+
+    # Grab a couple of temporary strings from {map}:
+    temporary1 :@= map.temporary1
+    temporary2 :@= map.temporary2
+
+    # Preload all the field values as local variables with bogus values:
+    big :@= map.big
+    pi :@= map.pi
+
+    goodness_metric :@= big
+    origin_id :@= 0xffffffff
+    target_twist :@= big
+    target_angle :@= big
+    target_distance :@= big
+    target_id :@= 0xffffffff
+
+    # Read the beginning of the "<Neighbor...>" tag:
+    assert !xml_tag_match@(xml_stream, "Neighbor")
+
+    # Read all of the field values:
+    while !xml_attribute_read@(xml_stream, temporary1, temporary2) &&
+      temporary1.size != 0
+	if equal@(temporary1, "Goodness_Metric")
+	    goodness_metric := double_convert@(temporary2)
+	else_if equal@(temporary1, "Origin_Id")
+	    origin_id := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Target_Angle")
+	    target_angle := double_convert@(temporary2) * pi / 180.0
+	else_if equal@(temporary1, "Target_Distance")
+	    target_distance := double_convert@(temporary2)
+	else_if equal@(temporary1, "Target_Id")
+	    target_id := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Target_Twist")
+	    target_twist := double_convert@(temporary2) * pi / 180.0
+	else
+	    # Bogus field name:
+	    call d@(form@("Field=%v% Value=%v%\n\") %
+	      f@(temporary1) / f@(temporary2))
+	    assert 0f
+
+    # Read the ".../>" for the neighbor tag:
+    assert !xml_tag_end@(xml_stream, 1t)
+
+    # Make sure we read every field that was expected:
+    assert goodness_metric != big
+    assert origin_id != 0xffffffff
+    assert target_angle != big
+    assert target_distance != big
+    assert target_id != 0xffffffff
+    assert target_twist != big
+
+    # Find the two neighbor end {Tag}'s:
+    origin :@= tag_lookup@(map, origin_id, "xml_read@Tag_Neighbor: origin")
+    target :@= tag_lookup@(map, target_id, "xml_read@Tag_Neighbor: target")
+
+    # Create the new {neighbor} and return it:
+    neighbor :@= create@Tag_Neighbor(origin, target, target_twist,
+      target_angle, target_distance, goodness_metric, 0xffffff00)
+
+    return neighbor
+
+
+routine xml_write@Tag_Neighbor
+    takes neighbor Tag_Neighbor
+    takes indent Unsigned
+    takes xml_stream Out_Stream
+    returns_nothing
+
+    # This routine will write out {neighbor} to {xml_stream} indented
+    # by {indent}.
+
+    pi :@= neighbor.origin.map.pi
+
+    call put@(form@("%p%<Neighbor") / f@(indent), xml_stream)
+    call put@(form@(" Origin_Id=\dq\%d%\dq\") / f@(neighbor.origin.id),
+      xml_stream)
+    call put@(form@(" Target_Id=\dq\%d%\dq\") / f@(neighbor.target.id),
+      xml_stream)
+    call put@(form@(" Goodness_Metric=\dq\%2f%\dq\") /
+      f@(neighbor.goodness_metric), xml_stream)
+    call put@(form@(" Target_Angle=\dq\%2f%\dq\") /
+      f@(neighbor.target_angle * 180.0 / pi), xml_stream)
+    call put@(form@(" Target_Distance=\dq\%2f%\dq\") /
+      f@(neighbor.target_distance), xml_stream)
+    call put@(form@(" Target_Twist=\dq\%2f%\dq\") /
+      f@(neighbor.target_twist * 180.0 / pi), xml_stream)
+    call put@("/>\n\", xml_stream)
+
+
+# {Path_Segment} routines:
+
+routine create@Path_Segment
+    takes way1 Way
+    takes way2 Way
+    takes indent Unsigned
+    returns Path_Segment
+
+    # This routine will create and return a new {Path_Segment} that contains
+    # {way1} and {way2}.  {way1} must be different from {way2}.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>create@Path_Segment(%w%, %2%)\n\") %
+	  f@(indent) % f@(way1) / f@(way2))
+    indent1 :@= indent + 1
+
+    # A {Path_Segment} that connects a {Way} to itself is not allowed:
+    assert way1 !== way2
+
+    # Make sure {way1} < {way2}:
+    if compare@(way1, way2) > 0i
+	# Swap {way1} and {way2}:
+	way :@= way1
+	way1 := way2
+	way2 := way
+
+    # Make sure we are not creating a duplicate:
+    assert !segment_exists@(way1, way2, indent1)
+
+    # Create {segment} and fill it in:
+    segment :@= new@Path_Segment()
+    segment.way1 := way1
+    segment.way2 := way2
+
+    # Add {segment} to {way1} and {way2}:
+    call append@(way1.segments, segment)
+    call append@(way2.segments, segment)
+
+    if trace
+	call d@(form@("<=create@Path_Segment(%w%, %2%)=>%s%\n\") %
+	  f@(way1) % f@(way2) / f@(segment))
+
+    return segment
+
+
+routine compare@Path_Segment
+    takes segment1 Path_Segment
+    takes segment2 Path_Segment
+    returns Integer
+
+    # This routine will return -1, 0, 1 depending upon whether {segment1}
+    # should be sorted before, at, or after {segment2}.
+
+    result :@= compare@(segment1.way1, segment2.way1)
+    if result = 0i
+	result := compare@(segment1.way2, segment2.way2)
+    return result	
+
+
+routine equal@Path_Segment
+    takes segment1 Path_Segment
+    takes segment2 Path_Segment
+    returns Logical
+
+    # This routine will return {true@Logical} if {segment1} is equal to
+    # {segment2}.
+
+    return compare@(segment1, segment2) = 0i
+
+
+routine f@Path_Segment
+    takes segment Path_Segment
+    returns String
+
+    # This routine will format {segment} into a {String} and return it.
+
+    value :@= field_next@Format()
+    call trim@(value, 0)
+
+    call string_append@(value,
+      form@("%w%-%w%") % f@(segment.way1) / f@(segment.way2))
+    return value
+
+
+routine identical@Path_Segment
+    takes segment1 Path_Segment
+    takes segment2 Path_Segment
+    returns Logical
+
+    # This routine will return {true@Logical} if {segment1} is identical to
+    # {segment2}.
+
+    return segment1 == segment2
+
+
+routine match@Path_Segment
+    takes segment Path_Segment
+    takes way1 Way
+    takes way2 Way
+    returns Logical
+
+    # This routine will return {true@Logical} if {segment} contains both
+    # {way1} and {way2}.
+
+    result :@= 0f
+    if way1 == segment.way1 && way2 == segment.way2
+	result := 1t
+    else_if way1 == segment.way2 && way2 == segment.way1
+	result := 1t
+    return result
+
+
+routine other_way@Path_Segment
+    takes segment Path_Segment
+    takes way Way
+    takes indent Unsigned
+    returns Way
+
+    # This routine will return the {Way} in {segment} that is not identical
+    # to {way}.  This routine fails if {way} is not in {segment}:
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>other_way@Path_Seg(%s%, %w%)\n\") %
+	  f@(indent) % f@(segment) / f@(way))
+
+    # Grab some values out of {segment}:
+    way1 :@= segment.way1
+    way2 :@= segment.way2
+    assert way1 !== way2
+
+    # Figure out wether {way1} or {way2} is {other_way}:
+    other_way :@= null@Way
+    if way1 == way
+	other_way := way2
+    else_if way2 == way
+	other_way := way1
+    else
+	assert 0f
+
+    if trace
+	call d@(form@("%p%<=other_way@Path_Seg(%s%, %w%)=>%w%\n\") %
+	  f@(indent) % f@(segment) % f@(way) / f@(other_way))
+    return other_way
+
+
+routine xml_read@Path_Segment
+    takes map Map
+    takes xml_stream In_Stream
+    takes indent Unsigned
+    returns Path_Segment
+
+    # This routine will read in a {Path_Segment} from {xml_stream} using {map}
+    # to look up the associated {Way} objects.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>xml_read@Path_Segment()\n\") / f@(indent))
+    indent1 :@= indent + 1
+
+    temporary1 :@= map.temporary1
+    temporary2 :@= map.temporary2
+
+    # Preload the attribute values into local variables with bogus values:
+    bogus :@= 0xffffffff
+    tag1_id :@= bogus
+    way1_id :@= bogus
+    tag2_id :@= bogus
+    way2_id :@= bogus
+
+    # Read the <Segment...>:
+    assert !xml_tag_match@(xml_stream, "Segment")
+    while !xml_attribute_read@(xml_stream, temporary1, temporary2) &&
+      temporary1.size != 0
+	if equal@(temporary1, "Tag1_Id")
+	    tag1_id := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Tag2_Id")
+	    tag2_id := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Way1_Id")
+	    way1_id := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Way2_Id")
+	    way2_id := unsigned_convert@(temporary2)
+	else
+	    call d@(form@("field=%v% value=%v%\n\") %
+	      f@(temporary1) / f@(temporary2))
+	    assert 0f
+    assert !xml_tag_end@(xml_stream, 1t)
+
+    # Make sure we got all required fields:
+    assert tag1_id != bogus
+    assert tag2_id != bogus
+    assert way1_id != bogus
+    assert way2_id != bogus
+
+    #call d@(form@("xml_read@Tag(): id=%d% nsize=%d% ways_size=%d%\n\") %
+    #  f@(id) % f@(neighbors_size) / f@(ways_size))
+
+    # Lookup the tags and ways:
+    tag1 :@= tag_lookup@(map, tag1_id, "xml_read@Path_Segment: 1")
+    tag2 :@= tag_lookup@(map, tag2_id, "xml_read@Path_Segment: 2")
+    way1 :@= way_lookup@(tag1, way1_id, "xml_read@Path_Segment: 1")
+    way2 :@= way_lookup@(tag2, way2_id, "xml_read@Path_Segment: 2")
+
+    # Create and return the {segment}:
+    segment :@= create@Path_Segment(way1, way2, indent1)
+
+    if trace
+	call d@(form@("%p%=>xml_read@Path_Segment()=>%s%\n\") %
+	  f@(indent) / f@(segment))
+    return segment
+
+
+routine xml_write@Path_Segment
+    takes segment Path_Segment
+    takes indent Unsigned
+    takes xml_stream Out_Stream
+
+    # This routine will output {segment} to {xml_stream} indented by {indent}.
+
+    way1 :@= segment.way1
+    way2 :@= segment.way2
+    call put@(form@("%p%<Segment") / f@(indent), xml_stream)
+    call put@(form@(" Tag1_Id=\dq\%d%\dq\") / f@(way1.tag.id), xml_stream)
+    call put@(form@(" Way1_Id=\dq\%d%\dq\") / f@(way1.id), xml_stream)
+    call put@(form@(" Tag2_Id=\dq\%d%\dq\") / f@(way2.tag.id), xml_stream)
+    call put@(form@(" Way2_Id=\dq\%d%\dq\") / f@(way2.id), xml_stream)
+    call put@("/>\n\", xml_stream)
+
+
+# {Way} routines:
+
+routine create@Way
+    takes angle Double
+    takes close_width Double
+    takes dx Double
+    takes dy Double
+    takes flags String
+    takes height Double
+    takes id Unsigned
+    takes name String
+    takes open_width Double
+    takes tag Tag
+    returns Way
+
+    # This routine will create and return a new {Way} that contains {angle},
+    # {close_width}, {dx}, {dy}, {flags}, {height}, {id}, {name}, {open_width},
+    # and {tag}.
+
+    # Grab some values from {tag}:
+    map :@= tag.map
+
+    # Make sure we are not doing a double insert:
+    ways :@= tag.ways
+    size :@= ways.size
+    index :@= 0
+    while index < size
+	assert ways[index].id != id
+	index := index + 1
+
+    # Create {way} and fill it in:
+    way :@= new@Way()
+    way.angle := angle
+    way.close_width := close_width
+    way.dx := dx
+    way.dy := dy
+    way.flags := flags
+    way.height := height
+    way.id := id
+    way.name := name
+    way.open_width := open_width
+    way.path_distance := map.big
+    way.path_back := null@Way
+    way.segments := new@Array[Path_Segment]()
+    way.tag := tag
+    way.visit := 0
+
+    # Append {way} to {map} and {tag}:
+    call append@(tag.ways, way)
+    call append@(map.ways, way)
+    map.changed := map.changed + 1
+
+    return way
+
+
+routine compare@Way
+    takes way1 Way
+    takes way2 Way
+    returns Integer
+
+    # This routine will return -1, 0, 1 depending upon whether {way1}
+    # should sort before, at, or after {way2}.
+
+    result :@= compare@(way1.tag.id, way2.tag.id)
+    if result = 0i
+	result := compare@(way1.id, way2.id)
+    return result
+
+
+routine f@Way
+    takes way Way
+    returns String
+
+    # This routine will format {tag} into a {String}.
+
+    value :@= field_next@Format()
+
+    # Scan flags:
+    visible :@= 0f
+    size :@= value.size
+    index :@= 0
+    while index < size
+	switch value[index]
+	  case 'v'
+	    visible := 1t
+	index := index + 1
+    call trim@(value, 0)
+
+    # Format {way}:
+    if visible
+	call character_append@(value, '"')
+    if way == null@Way
+	call string_append@(value, "<none>")
+    else
+	call string_append@(value, form@("<%d%:%d%(=%s%)>") %
+	  f@(way.tag.id) % f@(way.id) / f@(way.name))
+    if visible
+	call character_append@(value, '"')
+
+    return value
+
+
+routine id_get@Way
+    takes way Way
+    returns Unsigned
+
+    # This routine will return the index into {way.ways} for {way}.
+    # This routine is used for XML writing.
+
+    # Find {ways}:
+    tag :@= way.tag
+    ways :@= tag.ways
+    size :@= ways.size
+
+    # Seach {ways} looking for {way}:
+    id :@= size
+    index :@= 0
+    while index < 0
+	if way == ways[index]
+	    # Found it:
+	    id := index
+	    break
+	index := index + 1
+    assert id < size
+
+    return id
+
+
+routine is_backup@Way
+    takes way Way
+    returns Logical
+
+    # This routine will return {true@Logical} if {way} is a backup way
+    # that the robot should back away from and {false@Logical} otherwise.
+
+    result :@= 0f
+    flags :@= way.flags
+    size :@= flags.size
+    index :@= 0
+    while index < size
+	if flags[index] = 'b'
+	    result := 1t
+	    break
+	index := index + 1
+    return result
+
+
+routine gateway@Way
+    takes way Way
+    returns Way
+
+    # This routine will return the "gateway" way to {way}, which is the
+    # {Way} that leads to {way}.  If {way} is {null@Way} or there is no
+    # gateway, {null@Way} is returned.
+
+    gateway :@= null@Way
+
+    # There is a gateway only if there is a single segment leading
+    # towards {way}:
+    segments :@= way.segments
+    call d@(form@("gateway@Way: segments.size=%d%\n\") / f@(segments.size))
+    if segments.size = 1
+	# {segment} spans two {Way}'s.  The one that is not {way} is
+	# our {gateway}:
+	segment :@= segments[0]
+	way1 :@= segment.way1
+	if way1 == way
+	    gateway := segment.way2
+	else
+	    gateway := way1
+    else
+	index :@= 0
+	while index < segments.size
+	    segment :@= segments[index]
+	    call d@(form@("Segment[%d%]=%s%\n\") % f@(index) / f@(segment))
+	    index := index + 1
+    return gateway
+
+
+routine segment_append@Way
+    takes way Way
+    takes segment Path_Segment
+    returns_nothing
+
+    # This routine will ensure that {segment} is appended to the segment
+    # list of {way}.  If there is a duplicate, the operation is silently
+    # ignored.
+
+    # Scan {segments} for duplicate {segment}:
+    segments :@= way.segments
+    size :@= segments.size
+    index :@= 0
+    while index < size
+	# Check for duplicate:
+	if equal@(segment, segments[index])
+	    # We have a duplicate; mark {segment} to {null}:
+	    #call d@("segment_append@Way: duplicate segment\n\")
+	    segment := null@Path_Segment
+	    break
+	index := index + 1
+
+    # If no errors, {segment} is non-null and can be appended to {segments}:
+    if segment !== null@Path_Segment
+	# Append {segment} to {segments}:
+	call append@(segments, segment)
+
+
+routine segment_break@Way
+    takes way1 Way
+    takes way2 Way
+
+    # This routine will break path segment between {way1} and {way2}.
+
+    #call d@(form@("=>segment_break@(%d%:%d%, %d%:%d%)\n\") %
+    #  f@(way1.tag.id) % f@(way1.id) % f@(way2.tag.id) / f@(way2.id))
+
+    #call d@(form@("seg_brk: t1=%d% w1=%d% segs1.size=%d%\n\") %
+    #  f@(way1.tag.id) % f@(way1.id) / f@(way1.segments.size))
+    #call d@(form@("seg_brk: t2=%d% w2=%d% segs2.size=%d%\n\") %
+    #  f@(way2.tag.id) % f@(way2.id) / f@(way2.segments.size))
+
+    # Remove the {Segment} from {way1} and {way2}:
+    call segment_remove@(way1, way2)
+    call segment_remove@(way2, way1)
+
+
+routine segment_delete@Way
+    takes way Way
+    takes segment Path_Segment
+    returns_nothing
+
+    # This routine will ensure that {segment} is not in the segment list
+    # of {way}.
+
+    # Scan {segments} for {segment}:
+    segments :@= way.segments
+    size :@= segments.size
+    index :@= 0
+    while index < size
+	if equal@(segments[index], segment)
+	    # We found {segment}, remove it by replacing it with the last
+	    # segment in {segments} and reducing {segments} lenght by 1:
+	    size := size - 1
+	    segments[index] := segments[size]
+	    call trim@(segments, size)
+
+	    # Do not increment {index}, since we want to visit the new value
+	    # that was just stuffed into {index}'th slot of {segments}:
+	else
+	    index := index + 1
+
+
+routine segment_exists@Way
+    takes way1 Way
+    takes way2 Way
+    takes indent Unsigned
+    returns Logical
+
+    # This routine will return {true@Logical} if there is a {Path_Segment}
+    # that connects {way1} to {way2}.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>segment_exists@Way(%w%, %w%)\n\") %
+	  f@(indent) % f@(way1) / f@(way2))
+    indent1 :@= indent + 1
+
+    # Sequence through each {segment} in {segments} looking for a match:
+    result :@= 0f
+    segments1 :@= way1.segments
+    size1 :@= segments1.size
+
+    # Scan through {segments1}:
+    index :@= 0
+    while index < size1
+	segment :@= segments1[index]
+	if trace
+	    call d@(form@("%p%Way1.segments[%d%]=%s%\n\") %
+	      f@(indent) % f@(index) / f@(segment))
+	other_way1 :@= other_way@(segment, way1, indent1)
+	if other_way1 == way2
+	    result := 1t
+	    break
+	index := index + 1
+
+    # Scan through {segments2}:
+    segments2 :@= way2.segments
+    size2 :@= segments2.size
+    index := 0
+    while index < size2
+	segment :@= segments2[index]
+	if trace
+	    call d@(form@("%p%Way2.segments[%d%]=%s%\n\") %
+	      f@(indent) % f@(index) / f@(segment))
+	other_way2 :@= other_way@(segment, way2, indent1)
+	if other_way2 == way1
+	    result := 1t
+	    break
+	index := index + 1
+
+    if trace
+	call d@(form@("%p%<=segment_exists@Way(%w%, %w%)=>%l%\n\") %
+	  f@(indent) % f@(way1) % f@(way2) / f@(result))
+    return result
+
+
+routine segment_join@Way
+    takes way1 Way
+    takes way2 Way
+    takes indent Unsigned
+    returns_nothing
+
+    # This routine will cause {way1} to be joined to {way2} via a path segment.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>segment_join@Way(%w%, %w%)\n\") %
+	  f@(indent) % f@(way1) / f@(way2))
+	call d@(form@("%p%before way1.segments.size=%d%\n\") %
+	  f@(indent)/ f@(way1.segments.size))
+	call d@(form@("%p%before way2.segments.size=%d%\n\") %
+	  f@(indent) / f@(way2.segments.size))
+    indent1 :@= indent + 1
+
+    # Create and add {segment} to {way1} and {way2}:
+    segment :@= create@Path_Segment(way1, way2, indent1)
+    assert segment_exists@(way1, way2, indent1)
+
+    if trace
+	call d@(form@("%p%after way1.segments.size=%d%\n\") %
+	  f@(indent) / f@(way1.segments.size))
+	call d@(form@("%p%after way2.segments.size=%d%\n\") %
+	  f@(indent) / f@(way2.segments.size))
+	call d@(form@("%p%<=segment_join@Way(%w%, %w%)\n\") %
+	  f@(indent) % f@(way1) / f@(way2))
+
+
+routine segment_remove@Way
+    takes way1 Way
+    takes way2 Way
+    returns_nothing
+
+    # This routine will remove the {Path_Segment} that connects {way1} to {way2}
+    # from {way1}.
+
+    #call d@(form@("=>segment_remove@Way(%d%:%d%, %d%:%d%)\n\") %
+    #  f@(way1.tag.id) % f@(way1.id) % f@(way2.tag.id) / f@(way2.id))
+
+    # Search for the {Path_Segment} that contains both {way1} and {way2}:
+    match :@= 0f
+    segments :@= way1.segments
+    size :@= segments.size
+    index :@= 0
+    while index < size
+	segment :@= segments[index]
+	#call d@(form@("segments[%d%]=%d%:%d% %d%:%d%\n\") % f@(index) %
+	#    f@(segment.way1.tag.id) % f@(segment.way1.id) %
+	#    f@(segment.way2.tag.id) / f@(segment.way2.id))
+	if match@(segment, way1, way2)
+	    # Found it:
+	    match := 1t
+	    segments[index] := segments[size - 1]
+	    call trim@(segments, size - 1)
+	    break
+	index := index + 1
+    assert match
+
+    #call d@(form@("<=segment_remove@Way(%d%:%d%, %d%:%d%)\n\") %
+    #  f@(way1.tag.id) % f@(way1.id) % f@(way2.tag.id) / f@(way2.id))
+
+
+routine show@Way
+    takes way Way
+    returns_nothing
+
+    # This routine will output the contents of {way}.
+
+    # Use {pi} to convert between radians and degrees:
+    pi :@= way.tag.map.pi
+
+    # Show {way}:
+    call d@(form@("  Way: id=%d% dx=%2f% dy=%2f% angle=%2f% name=%v%\n\") %
+      f@(way.id) % f@(way.dx) % f@(way.dy) % f@(way.angle * 180.0 / pi) /
+      f@(way.name))
+
+    # Sort the {segments} of {way}:
+    segments :@= way.segments
+    call sort@(segments, compare@Path_Segment)
+    
+    # Output each segment in {segments};
+    size :@= segments.size
+    index :@= 0
+    while index < size
+	segment :@= segments[index]
+	other_way :@= other_way@(segment, way, 0xffffff00)
+	call d@(form@("    Segment: tag=%d% way=%d%\n\") %
+	  f@(other_way.tag.id) / f@(other_way.id))
+	index := index + 1
+
+
+routine update@Way
+    takes way Way
+    takes dx Double
+    takes dy Double
+    takes angle Double
+    takes name String
+    takes height Double
+    takes open_width Double
+    takes close_width Double
+    takes flags String
+    returns_nothing
+
+    # This routine will update the contents of {way} to contain {dx}, {dy},
+    # {angle} (measured in radians), {name}, {height}, {open_width},
+    # {close_width}, and {flags}.
+
+    # Load up {way}:
+    way.dx := dx
+    way.dy := dy
+    way.angle := angle
+    way.name := name
+    way.height := height
+    way.open_width := open_width
+    way.close_width := close_width
+    way.flags := flags
+
+
+routine xml_read@Way
+    takes map Map
+    takes xml_stream In_Stream
+    returns Way
+
+    # Grab a couple of temporary strings from {map}:
+    temporary1 :@= map.temporary1
+    temporary2 :@= map.temporary2
+
+    # Preload all the field values as local variables with bogus values:
+    big :@= map.big
+    pi :@= map.pi
+
+    angle :@= big
+    close_width :@= big
+    dx :@= big
+    dy :@= big
+    flags :@= null@String
+    height :@= big
+    id :@= 0xffffffff
+    name :@= null@String
+    open_width :@= big
+    tag_id :@= 0xffffffff
+
+    # Read the beginning of the "<Way...>" tag:
+    assert !xml_tag_match@(xml_stream, "Way")
+
+    # Read all of the field values:
+    while !xml_attribute_read@(xml_stream, temporary1, temporary2) &&
+      temporary1.size != 0
+	if equal@(temporary1, "Angle")
+	    angle := double_convert@(temporary2) * pi / 180.0
+	else_if equal@(temporary1, "Close_Width")
+	    close_width := double_convert@(temporary2)
+	else_if equal@(temporary1, "DX")
+	    dx := double_convert@(temporary2)
+	else_if equal@(temporary1, "DY")
+	    dy := double_convert@(temporary2)
+	else_if equal@(temporary1, "Flags")
+	    flags := read_only_copy@(temporary2)
+	else_if equal@(temporary1, "Id")
+	    id := unsigned_convert@(temporary2)
+	else_if equal@(temporary1, "Height")
+	    height := double_convert@(temporary2)
+	else_if equal@(temporary1, "Name")
+	    name := read_only_copy@(temporary2)
+	else_if equal@(temporary1, "Open_Width")
+	    open_width := double_convert@(temporary2)
+	else_if equal@(temporary1, "Tag_Id")
+	    tag_id := unsigned_convert@(temporary2)
+	else
+	    # Bogus field name:
+	    call d@(form@("Field=%v% Value=%v%\n\") %
+	      f@(temporary1) / f@(temporary2))
+	    assert 0f
+
+    # Read the ".../>" for the Way tag:
+    assert !xml_tag_end@(xml_stream, 1t)
+
+    # Make sure we read every field that was expected:
+    assert angle != big
+    assert close_width != big
+    assert dx != big
+    assert dy != big
+    assert flags !== null@String
+    assert height != big
+    assert id != 0xffffffff
+    assert name !== null@String
+    assert open_width != big
+    assert tag_id != 0xffffffff
+
+    # Search for a previously defined {Neighbor} that matches {id}:
+    tag :@= tag_lookup@(map, tag_id, "create@Way")
+    way :@= create@Way(angle,
+      close_width, dx, dy, flags, height, id, name, open_width, tag)
+
+    return way
+
+
+routine xml_write@Way
+    takes way Way
+    takes indent Unsigned
+    takes xml_stream Out_Stream
+    returns_nothing
+
+    # This routine will write out {way} to {xml_stream} indented by {indent}.
+
+    # {pi} is used to convert between radians and degrees:
+    pi :@= way.tag.map.pi
+
+    # Create a unquie way name if we do not already have one:
+    way_name :@= way.name
+    if way_name.size = 0
+	way_name := read_only_copy@(form@("%d%%c%") %
+	  f@(way.tag.id) / f@("abcdefghijklmnopqrstuvwxyz"[way.id]))
+
+    # Output <Way .../> tag:
+    call put@(form@("%p%<Way") / f@(indent), xml_stream)
+    call put@(form@(" Angle=\dq\%2f%\dq\") / f@(way.angle * 180.0 / pi),
+      xml_stream)
+    call put@(form@(" Close_Width=\dq\%2f%\dq\") / f@(way.close_width),
+      xml_stream)
+    call put@(form@(" Id=\dq\%d%\dq\") / f@(way.id), xml_stream)
+    call put@(form@(" DX=\dq\%2f%\dq\") / f@(way.dx), xml_stream)
+    call put@(form@(" DY=\dq\%2f%\dq\") / f@(way.dy), xml_stream)
+    call put@(form@(" Flags=%v%") / f@(way.flags), xml_stream)
+    call put@(form@(" Height=\dq\%2f%\dq\") / f@(way.height), xml_stream)
+    call put@(form@(" Name=\dq\%s%\dq\") / f@(way_name), xml_stream)
+    call put@(form@(" Open_Width=\dq\%2f%\dq\") / f@(way.open_width),
+      xml_stream)
+    call put@(form@(" Tag_Id=\dq\%2f%\dq\") / f@(way.tag.id), xml_stream)
+    call put@("/>\n\", xml_stream)
+
+
+# {Unsigned} routines:
+
+routine equal@Unsigned
+    takes value1 Unsigned
+    takes value2 Unsigned
+    returns Logical
+
+    # This routine will return {true@Logical} if {value1} equals {value2}.
+
+    return value1 = value2
+
+				

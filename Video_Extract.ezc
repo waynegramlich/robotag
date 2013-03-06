@@ -1,0 +1,494 @@
+easy_c 1.0
+
+# Copyright (c) 2010-2011 by Wayne C. Gramlich
+# All rights reserved
+
+library CV
+library Easy_C
+library Extractor
+library Unix
+library Unix_Dispatch
+library V4L2
+
+define Globals
+    record
+	brain Unix_Dispatch[Globals]
+	brain_command String
+	brain_line String
+	buffer V4L2_Buffer
+	chunks Array[V4L2_Chunk]
+	enabled Unsigned
+	extractor Extractor
+	gray_image CV_Image
+	image_count Unsigned
+	text String
+	video Unix_Dispatch[Globals]
+
+routine main@Easy_C
+    takes arguments Array[String]
+    returns Integer
+
+    call d@("Video_Extract\n\")
+    arguments_size :@= arguments.size
+    index :@= 0
+    while index < arguments_size
+	#call d@(form@(" %s%") / f@(arguments[index]))
+	index := index + 1
+    #call d@("\n\")
+
+    debug_stream :@= error@Out_Stream
+
+    # Kludge to allow changing of video device:
+    video_device_name :@= "/dev/video0"
+    if arguments.size >= 2
+	video_device_name := arguments[1]
+
+    enabled :@= 0
+    if arguments.size >= 3
+	enabled := unsigned_convert@(arguments[2])
+    #call d@(form@("enabled=%d%\n\") / f@(enabled))
+
+    # Open {video_device_name}:
+    video_flags :@= unix_file_o_rdwr@Unsigned | unix_file_o_nonblock@Unsigned
+    video_stream :@= open@Unix(video_device_name, video_flags, 0)
+    if video_stream < 0i
+	call d@(form@("Unable to open video device %v%\n\") /
+	  f@(video_device_name))
+	return 1i
+
+    # Initialize the device and get back an array {V4L2_Chunk} object
+    # that correspond to memory mapped page buffers:
+    #width :@= 320i
+    #height :@= 240i
+    width :@= 320i * 2i
+    height :@= 240i * 2i
+    chunks :@= device_initialize@Easy_C(width, height, video_stream)
+
+    # Create {gray} image, create {extractor} and initialize both to same
+    # {width} and {height}:
+    size :@= create@CV_Size(width, height)
+    gray_image :@= create_image@CV(size, 8i, 1i)
+    extractor :@= create@Extractor()
+    call size_set@(extractor, width, height)
+
+    map :@= extractor.map
+    #call map_read@(map, "tags.xml")
+    map.tag_updated := tag_updated@Easy_C
+    map.neighbor_updated := neighbor_updated@Easy_C
+
+    # Create {globals} here and fill it in a little later:
+    globals :@= one_and_only@Globals()
+    dispatcher :@= create@Unix_Dispatcher[Globals](globals)
+
+    # Fill in {globals}:
+    globals.brain := connect_allocate@(dispatcher,
+      "brain", "localhost", 7777, brain_read@Easy_C)
+    globals.brain_command := new@String()
+    globals.brain_line := new@String()
+    globals.buffer := new@V4L2_Buffer()
+    globals.chunks := chunks
+    globals.enabled := enabled
+    globals.extractor := extractor
+    globals.gray_image := gray_image
+    globals.image_count := 0
+    globals.text := new@String()
+    globals.video := open_file_number_allocate@(dispatcher,
+      "video", video_stream, fail_routine@Unix_Dispatch[Globals])
+    call io_enable@(globals.video, video_io@Easy_C, 1t, 0t, 0t)
+      
+    # Enter the dispatch loop:
+    call dispatch_loop@(dispatcher)
+
+    # For now, we exit the program without doing any clean-up:
+    #stop_capturing()
+
+    #uninit_device()
+
+    # Close {device_name}:
+    assert close@Unix(video_stream) = 0i
+
+    return 0i
+
+
+routine brain_read@Easy_C
+    takes brain Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This process will process input from {brain}.
+
+    # Grab {brain_line} from {globals}:
+    globals :@= brain.globals
+    extractor :@= globals.extractor
+    constants :@= extractor.constants
+    map :@= extractor.map
+    brain_line :@= globals.brain_line
+    pi :@= map.pi
+
+    # Check up on {input_buffer}:
+    input_buffer :@= brain.input_buffer
+    size :@= input_buffer.size
+    if size = 0
+	# We lost the connection.  It means we must commit suicide.
+	call exit@System(1)
+    else
+	# We have some data in {input_buffer} to process:
+	index :@= 0
+	while index < size
+	    character :@= input_buffer[index]
+	    call character_append@(brain_line, character)
+	    if character = '\n\'
+		# We have a full line from {brain}, get {brain_command}:
+		brain_command :@= globals.brain_command
+		call white_space_lop@(brain_line, null@String)
+		call word_lop@(brain_line, brain_command)
+		call white_space_lop@(brain_line, null@String)
+
+		if partial_match@(brain_command, "constants") >= 1
+		    call d@(form@("consts=%v% line=%v%\n\") %
+		      f@(brain_command) / f@(brain_line))
+		    call line_parse@(constants, brain_line)
+		    call d@(form@("vid_ext: cdx=%2f% cdy=%2f%\n\") %
+		      f@(constants.camera_dx) / f@(constants.camera_dy))
+		else_if partial_match@(brain_command, "level") >= 1
+		    # Level {level}:
+		    globals.enabled := unsigned_lop@(brain_line)
+		    switch globals.enabled
+		      case 0
+			call d@("ceiling camera off\n\")
+		      case 1
+			call d@("ceiling camera on\n\")
+		      case 2
+			call d@("ceiling camera on and save images\n\")
+		    #call d@(form@("Cam:level=%d%\n\") / f@(globals.enabled))
+		else_if partial_match@(brain_command, "map_ready") >= 1
+		    # map_ready
+		    #call d@("Cam:map_ready\n\")
+		else_if partial_match@(brain_command, "tag") >= 1
+		    # tag {id} {x} {y} {angle}
+		    tag :@= tag_create_parse@(map, brain_line)
+		    #call d@(form@("Cam:tag %d% %2f% %2f% %2f%\n\") %
+		    #  f@(tag.id) % f@(tag.x) % f@(tag.y) /
+		    #  f@(tag.angle * 180.0 / pi))
+		else_if partial_match@(brain_command, "neighbor") >= 2
+		    # neighbor orig_id targ_id tangle tbearing tdist goodness
+		    origin_id :@= unsigned_lop@(brain_line)
+		    target_id :@= unsigned_lop@(brain_line)
+		    target_angle :@= double_lop@(brain_line) * pi / 180.0
+		    target_bearing :@= double_lop@(brain_line) * pi / 180.0
+		    target_distance :@= double_lop@(brain_line)
+		    goodness_metric :@= double_lop@(brain_line)
+
+		    # Lookup the {origin} and {target} {Tag}'s:
+		    origin :@= tag_lookup@(map, origin_id, "brain_read N1")
+		    target :@= tag_lookup@(map, target_id, "brain_read N2")
+
+		    # Load the values into {neighbor}:
+		    assert !neighbor_exists@(origin, target)
+		    neighbor :@= create@Tag_Neighbor(origin, target,
+		      target_angle, target_bearing, target_distance,
+		      goodness_metric, 0xffffff00)
+		else_if partial_match@(brain_command, "segment") >= 1
+		    # tag {way1_tag_id} {way1_id} {way2_tag_id} {way2_id}
+		    call segment_create_parse@(map, brain_line, 0xffffff00)
+		    #call d@(form@(
+		    #  "Cam:segment t1=%d% w1=%d% t2=%d% w2=%d%\n\") %
+		    #  f@(map.segment_way1_tag_id) %
+		    #  f@(map.segment_way1_id) %
+		    #  f@(map.segment_way2_tag_id) /
+		    #  f@(map.segment_way2_id))
+		else_if partial_match@(brain_command, "way") >= 1
+		    # way {tag_way_id} {way_id} {dx} {dy} {angle}
+		    way :@= way_create_parse@(map, brain_line)
+		    #call d@(form@("Cam:way %d% %d% %2f% %2f% %2f% %v%\n\") %
+		    #  f@(way.tag.id) % f@(way.id) % f@(way.dx) % f@(way.dy) %
+		    #  f@(way.angle * 180.0 / pi) / f@(way.name))
+		else
+		    call d@(form@("cam:Bad command=%v%\n\") / f@(brain_command))
+	
+		# Clear out {brain_line}:
+		call trim@(brain_line, 0)
+
+	    index := index + 1
+
+
+routine neighbor_updated@Easy_C
+    takes neighbor Tag_Neighbor
+    returns_nothing
+
+    # This routine is called whenever {neighbor} is changed.
+
+    globals :@= one_and_only@Globals()
+    brain :@= globals.brain
+    extractor :@= globals.extractor
+    pi :@= extractor.pi
+    call write@(brain, form@("@N %d% %d% %2f% %2f% %2f% %2f%\n\") %
+      f@(neighbor.origin.id) % f@(neighbor.target.id) %
+      f@(neighbor.target_twist * 180.0 / pi) %
+      f@(neighbor.target_angle * 180.0 / pi) %
+      f@(neighbor.target_distance) / f@(neighbor.goodness_metric))
+
+
+routine tag_updated@Easy_C
+    takes tag Tag
+    takes from String
+    returns_nothing
+
+    # This routine is called whenever {tag} is changed.
+
+    globals :@= one_and_only@Globals()
+    brain :@= globals.brain
+    extractor :@= globals.extractor
+    pi :@= extractor.pi
+
+    # Do not propagate a bad tag:
+    if tag.bearing > 100000.0 || tag.x > 100000.0 || tag.y > 100000.0
+	call d@(form@("Video_Extract.ezc:tag_updated@Easy_C(%d%, %v%)\n\") %
+	  f@(tag.id) / f@(from))
+	call d@("**************************************************\n\")
+    else
+	# Tag seems good, let everybody know:
+	call write@(brain, form@("@T %d% %2f% %2f% %2f% %4f%\n\") %
+	  f@(tag.id) % f@(tag.x) % f@(tag.y) % f@(tag.bearing * 180.0 / pi) /
+	  f@(tag.edge_length))
+	#call write@(brain, "###########################################\n\")
+	call d@(form@("V:V2B:@T %d% %2f% %2f% %2f% %4f%\n\") %
+	  f@(tag.id) % f@(tag.x) % f@(tag.y) % f@(tag.bearing * 180.0 / pi) /
+	  f@(tag.edge_length))
+
+
+routine video_io@Easy_C
+    takes video Unix_Dispatch[Globals]
+    takes read Logical
+    takes write Logical
+    takes except Logical
+    returns_nothing
+
+    # This routine is invoked each time there is video frame read to
+    # be processed.
+
+    if read
+	# Extract some values from fields:
+	video_stream :@= video.file_socket_number
+	globals :@= video.globals
+	buffer :@= globals.buffer
+	chunks :@= globals.chunks
+	extractor :@= globals.extractor
+	gray_image :@= globals.gray_image
+	eagain :@= unix_errno_again@Unsigned
+	eintr :@= unix_errno_intr@Unsigned
+
+	#call d@(form@("globals.enabled=%d%\n\") / f@(globals.enabled))
+
+	# First we dequeue the frame so we can use it.  As before,
+	# if the operation fails with either a EAGAIN or EINTR,
+	# we retry the dequeue operation:
+	result :@= -1i
+	error_number :@= eagain
+	while result < 0i && (error_number == eagain || error_number == eintr)
+	    # Set {buffer} up to get the available frame index:
+	    call erase@(buffer)
+	    call type_set@(buffer, video_capture@V4L2_Buffer_Type)
+	    call memory_set@(buffer, mmap@V4L2_Memory)
+		
+	    # Ask for the frame index:
+	    result := dequeue@(buffer, video_stream)
+	    error_number := errno@Unix()
+
+	# For now, just print out an error message if an error occurs:
+	if result < 0i
+	    text :@= globals.text
+	    call trim@(text, 0)
+	    call d@(form@("Dequeue error:r=%d% err=%d% err=%v%\n\") %
+	      f@(result) % f@(error_number) /
+	      f@(errno_convert@Unix(text, error_number)))
+
+	# Grap the chunk associated with the index in {buffer}:
+	buffer_index :@= buffer.index
+	chunks_size :@= chunks.size
+	assert buffer_index < chunks_size
+	chunk :@= chunks[buffer_index]
+
+	# Process image:
+	#call d@(".")
+	call yuvu_to_gray@(chunk, gray_image)
+
+	# We need to give the buffer back to the kernel driver:
+	# We probably want to wrap this baby up in to catch EAGAIN
+	# or EINTR.  For now we just hope it works.
+	assert enqueue@(buffer, video_stream) != -1i
+
+	if globals.enabled >= 2
+	    image_count :@= globals.image_count + 1
+	    globals.image_count := image_count
+	    call tga_write@CV_Image(gray_image,
+	      form@("/tmp/extract%d%.tga") / f@(image_count))
+
+	if globals.enabled >= 1
+	    brain :@= globals.brain
+	    tags :@= extract@(extractor, gray_image, 0, 0xffffff00)
+	    #tags :@= extract@(extractor, gray_image, 0, 0)
+	    last_tag :@= extractor.last_tag
+
+	    pi :@= extractor.pi
+	    pi2 :@= pi * 2.0
+
+	    # We return the average of the robot locations and bearings.
+	    # Computing the average (X,Y) location is just summing up the
+	    # the individual (X,Y)'s and dividing by the total.  The average
+	    # bearing is trickier.  Pick the first bearing ({bearing0}) as
+	    # as the initial bearing, and compute the average deviation
+	    # of the remaining ones.  Sum in the average deviation to 
+	    # {bearing0} to get the final average:
+	    robot_x_sum :@= 0.0
+	    robot_y_sum :@= 0.0
+	    robot_bearing_sum :@= 0.0
+	    if last_tag !== null@Tag
+		temporary :@= extractor.temporary
+		call trim@(temporary, 0)
+
+		bearing0 :@= tags[0].robot_bearing
+		size :@= tags.size
+		index :@= 0
+		while index < size
+		    tag :@= tags[index]
+
+		    robot_x_sum := robot_x_sum + tag.robot_x
+		    robot_y_sum := robot_y_sum + tag.robot_y
+		    if index != 0
+			bearing_change :@= 
+			  angle_between@(bearing0, tag.robot_bearing)
+			robot_bearing_sum := robot_bearing_sum + bearing_change
+			#call d@(form@("[%d%]bearing_change=%2f%\n\") %
+			#  f@(index) / f@(bearing_change * 180.0 / pi))
+			  
+		    #call string_append@(temporary,
+		    #  form@(" %d% %2f% %2f% %2f%") %
+		    #  f@(tag.id) % f@(tag.robot_x) % f@(tag.robot_y) /
+		    #  f@(tag.robot_bearing * 180.0 / pi))
+		    call string_append@(temporary,
+		      form@(" %d% %2f% %2f% %2f%") %
+		      f@(tag.id) % f@(tag.camera_x) % f@(tag.camera_y) /
+		      f@(tag.camera_bearing * 180.0 / pi))
+		    index := index + 1
+
+		robot_x :@= robot_x_sum / double@(size)
+		robot_y :@= robot_y_sum / double@(size)
+		robot_bearing :@= bearing0
+		if size > 1
+		    robot_bearing := robot_bearing +
+		      angle_normalize@(robot_bearing_sum / double@(size - 1))
+
+		call write@(brain, form@("@L %d% %2f% %2f% %2f% %d% %s%\n\") %
+		  f@(last_tag.id) %
+		  f@(robot_x) % f@(robot_y) % f@(robot_bearing * 180.0 / pi) %
+		  f@(size) / f@(temporary))
+		call d@(form@("V:V2B:id:@L %d% %2f% %2f% %2f% %d% %s%\n\") %
+		  f@(last_tag.id) %
+		  f@(robot_x) % f@(robot_y) % f@(robot_bearing * 180.0 / pi) %
+		  f@(size) / f@(temporary))
+
+
+routine device_initialize@Easy_C
+    takes width Integer
+    takes height Integer
+    takes file_descriptor Integer
+    returns Array[V4L2_Chunk]
+
+    # Load the linux (version 2) V4L2 device capabilities into {capability}:
+    capability :@= new@V4L2_Capability()
+    assert query@(capability, file_descriptor) = 0i
+
+    # Ensure that we have a video capture device:
+    capabilities :@= capability.capabilities
+    assert capabilities & video_capture@V4L2_Capability != 0
+    assert capabilities & streaming@V4L2_Capability != 0
+
+    # Deal with devices that support cropping:
+    crop_capability :@= new@V4L2_Crop_Capability()
+    call type_set@(crop_capability, video_capture@V4L2_Buffer_Type)
+    if query@(crop_capability, file_descriptor) = 0i
+	# We have to worry about cropping:
+	crop :@= new@V4L2_Crop()
+	call type_set@(crop, video_capture@V4L2_Buffer_Type)
+	call contents_copy@(crop.crop_rectangle,
+	  crop_capability.default_rectangle)
+	call set@(crop, file_descriptor)	# Ignore any errors
+
+    format :@= new@V4L2_Format()
+    call type_set@(format, video_capture@V4L2_Buffer_Type)
+    pixel_format :@= format.pixel_format
+    call width_set@(pixel_format, width)
+    call height_set@(pixel_format, height)
+    call format_set@(pixel_format, yuyv@V4L2_Pixel_Format)
+    call field_set@(pixel_format, interlaced@V4L2_Field)
+
+    if set@(format, file_descriptor) = -1i
+	call d@(form@("width=%d% height=%d%\n\") % f@(width) / f@(height))
+	assert 0f
+    # Note: {width} and {height} may have changed in {pixel_format}:
+
+    # Buggy driver paranoia:
+    minimum :@= pixel_format.width * 2i
+    if pixel_format.bytes_per_line < minimum
+	call bytes_per_line_set@(pixel_format, minimum)
+    minimum := pixel_format.bytes_per_line * pixel_format.height
+    if pixel_format.size_image < minimum
+	call size_image_set@(pixel_format, minimum)
+
+    # Allocate some memory map buffers from {file_descriptor}:
+    request_buffers :@= create@V4L2_Request_Buffers(16,
+      video_capture@V4L2_Buffer_Type, mmap@V4L2_Memory)
+    assert request@(request_buffers, file_descriptor) != -1i
+    count :@= unsigned@(request_buffers.count)
+    # The number of buffers actually allocated is now in {count}:
+
+    # Make sure we got a least 2 buffers:
+    assert count >= 2
+
+    # Now start memory mapping the buffers into our address space:
+    chunks :@= new@Array[V4L2_Chunk]()
+    buffer :@= new@V4L2_Buffer()
+    index :@= 0
+    while index < count
+	call erase@(buffer)
+	call type_set@(buffer, video_capture@V4L2_Buffer_Type)
+	call memory_set@(buffer, mmap@V4L2_Memory)
+	call index_set@(buffer, index)
+	assert query@(buffer, file_descriptor) != -1i
+
+	#call d@(form@("xxx:length=%d% offset=%d%\n\") %
+	#  f@(buffer.length) / f@(buffer.offset))
+
+	# Create a chunk of memory mapped memory:
+	chunk :@= create@V4L2_Chunk(buffer, file_descriptor)
+	assert chunk !== null@V4L2_Chunk
+	call append@(chunks, chunk)
+
+	index := index + 1
+
+    # Why do we do this again?:
+    index := 0
+    while index < count
+	call erase@(buffer)
+	call type_set@(buffer, video_capture@V4L2_Buffer_Type)
+	call memory_set@(buffer, mmap@V4L2_Memory)
+	call index_set@(buffer, index)
+	assert query@(buffer, file_descriptor) != -1i
+	index := index + 1
+
+    # Enable video stream:
+    assert stream_on@V4L2(file_descriptor,
+      video_capture@V4L2_Buffer_Type) != -1i
+
+    return chunks
+
+# {Globals} routines:
+
+routine one_and_only@Globals
+    takes_nothing
+    returns Globals
+
+    # This routine will return the one and only {Globals} object.
+
+    return null@Globals
+

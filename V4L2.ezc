@@ -1,0 +1,667 @@
+easy_c 1.0
+
+library CV
+library Easy_C
+require V4L2_C
+include "V4L2_C.h"
+
+# {V4L2} stuff:
+
+define V4L2
+    record
+	zilch Unsigned
+
+routine stream_on@V4L2
+    takes file_descriptor Integer
+    takes type V4L2_Buffer_Type
+    returns Integer
+    external V4L2__stream_on
+
+    # This routine will turn on the video stream for the video device
+    # attached to {file_descriptor} using {type}.
+
+# {V4L2_Buffer} stuff:
+
+define V4L2_Buffer
+    external				# struct v4l2_buffer *
+
+external null@V4L2_Buffer V4L2_Buffer	# null object
+
+external mapped@V4L2_Buffer Unsigned	# Buffer is mapped (flag)
+external queued@V4L2_Buffer Unsigned	# Buffer is queued for processing
+external done@V4L2_Buffer Unsigned	# Buffer is ready
+external keyframe@V4L2_Buffer Unsigned	# Image is a keyframe (I-frame)
+external pframe@V4L2_Buffer Unsigned	# Image is a P-frame
+external bframe@V4L2_Buffer Unsigned	# Image is a B-frame
+external timecode@V4L2_Buffer Unsigned	# timecode field is valid
+external input@V4L2_Buffer Unsigned	# input field is valid
+
+routine bytes_used_get@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    returns Unsigned
+    external V4L2_Buffer__bytes_used_get
+
+    # This routine will return the bytes used field of {buffer}.
+
+routine dequeue@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    takes file_descriptor Integer
+    returns Integer
+    external V4L2_Buffer__dequeue
+
+    # This routine will dequeue the next buffer from the video device
+    # attached to {file_descriptor} using {buffer}.
+
+routine enqueue@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    takes file_descriptor Integer
+    returns Integer
+    external V4L2_Buffer__enqueue
+
+    # This routine will enqueue (i.e. return) the buffer tothe video device
+    # attached to {file_descriptor} using {buffer}.
+
+routine erase@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    returns_nothing
+    external V4L2_Buffer__erase
+
+    # This routine will erase the contents of {buffer}.
+
+routine index_get@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    returns Unsigned
+    external V4L2_Buffer__index_get
+
+    # This routine will set the index field of {buffer}.
+
+routine index_set@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    takes index Unsigned
+    returns_nothing
+    external V4L2_Buffer__index_set
+
+    # This routine will set the index field of {buffer} to {index}.
+
+routine flags_get@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    returns Unsigned
+    external V4L2_Buffer__flags_get
+
+    # This routine will return the flags field of {buffer}.
+
+routine length_get@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    returns Unsigned
+    external V4L2_Buffer__length_get
+
+    # This routine will return the length field of {buffer}.
+
+routine memory_set@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    takes memory V4L2_Memory
+    returns_nothing
+    external V4L2_Buffer__memory_set
+
+    # This routine will set the memory field of {buffer} to {memory}.
+
+routine new@V4L2_Buffer
+    takes_nothing
+    returns V4L2_Buffer
+    external V4L2_Buffer__new
+
+    # This routine will create and return an empty {V4L2_Buffer} object.
+
+routine offset_get@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    returns Unsigned
+    external V4L2_Buffer__offset_get
+
+    # This routine will return the offset field of {buffer}.
+
+
+routine query@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    takes file_descriptor Integer
+    returns Integer
+    external V4L2_Buffer__query
+
+    # This routine will fill in the rest of {buffer} with buffer information
+    # allocated from the video device at {file_descriptor}.
+
+routine type_set@V4L2_Buffer
+    takes buffer V4L2_Buffer
+    takes type V4L2_Buffer_Type
+    returns_nothing
+    external V4L2_Buffer__type_set
+
+    # This routine will set the type field of {buffer} to {type}.
+
+# {V4L2_Chunk} stuff:
+
+define V4L2_Chunk
+    external				# struct chunk *
+
+external null@V4L2_Chunk V4L2_Chunk	# null object
+
+routine create@V4L2_Chunk
+    takes buffer V4L2_Buffer
+    takes file_descriptor Integer
+    returns V4L2_Chunk
+    external V4L2_Chunk__create
+
+    # This routine will allocate a chunk of memory mapped memory for
+    # the video device attached to {file_descriptor} using the information
+    # in {buffer} to control the allocation.  A {V4L2_Chunk} object
+    # is returned on success and {null@V4L2_Chunk} is returned on failure.
+
+routine yuvu_to_gray@V4L2_Chunk
+    takes chunk V4L2_Chunk
+    takes gray_image CV_Image
+    returns_nothing
+    external V4L2_Chunk__yuvu_to_gray
+
+    # This routine will convert the YUVU image information in {chunk} to
+    # a gray image in {gray_image}.
+
+# {V4L2_Buffer_Type} stuff:
+
+define V4L2_Buffer_Type		# enum v4l2_buf_type
+    external
+
+external video_capture@V4L2_Buffer_Type V4L2_Buffer_Type
+external video_output@V4L2_Buffer_Type V4L2_Buffer_Type
+external video_overlay@V4L2_Buffer_Type V4L2_Buffer_Type
+external vbi_capture@V4L2_Buffer_Type V4L2_Buffer_Type
+external vbi_output@V4L2_Buffer_Type V4L2_Buffer_Type
+external sliced_vbi_capture@V4L2_Buffer_Type V4L2_Buffer_Type
+external sliced_vbi_output@V4L2_Buffer_Type V4L2_Buffer_Type
+external video_output_overlay@V4L2_Buffer_Type V4L2_Buffer_Type
+external private@V4L2_Buffer_Type V4L2_Buffer_Type
+
+# {V4L_Capability} stuff:
+
+define V4L2_Capability		# struct v4l2_capability *
+    external
+
+external null@V4L2_Capability V4L2_Capability	# null object
+
+# Values for {capabilities} field of {V4L2_Capability} object:
+external video_capture@V4L2_Capability Unsigned # Is a video capture device
+external video_output@V4L2_Capability Unsigned	# Is a video output device
+external video_overlay@V4L2_Capability Unsigned	# Can do video overlay
+external vbi_capture@V4L2_Capability Unsigned	# Is a raw VBI capture device
+external vbi_output@V4L2_Capability Unsigned	# Is a raw VBI output device
+external sliced_vbi_capture@V4L2_Capability Unsigned # Is a sliced VBI cap dev
+external sliced_vbi_output@V4L2_Capability Unsigned # Is a sliced VBI out dev
+external rds_capture@V4L2_Capability Unsigned	# RDS data capture */
+external video_output_overlay@V4L2_Capability Unsigned	# Can do vid out overlay
+#external hw_freq_seek@V4L2_Capability Unsigned	# Can do hardware frequency seek
+
+external tuner@V4L2_Capability Unsigned		# has a tuner
+external audio@V4L2_Capability Unsigned		# has audio support
+external radio@V4L2_Capability Unsigned		# is a radio device
+
+external readwrite@V4L2_Capability Unsigned	# read/write systemcalls
+external asyncio@V4L2_Capability Unsigned	# async I/O
+external streaming@V4L2_Capability Unsigned	# streaming I/O ioctls
+
+routine capabilities_get@V4L2_Capability
+    takes capabilty V4L2_Capability
+    returns Unsigned
+    external V4L2_Capabilty__capabilities_get
+
+    # This routine will return the capabilities field for {capability}.
+
+
+routine new@V4L2_Capability
+    takes_nothing
+    returns V4L2_Capability
+    external V4L2_Capability__new
+
+    # This routine will return a new {V4L2_Capability} object.
+
+
+routine query@V4L2_Capability
+    takes capability V4L2_Capability
+    takes file_descriptor Integer
+    returns Integer
+    external V4L2_Capability__query
+
+    # This routine will fill in {capability} from the video device
+    # opened on {file_descriptor}.
+
+
+# {V4L2_Crop} stuff:
+
+define V4L2_Crop		# struct v4l2_crop *
+    external
+
+external null@V4L2_Crop V4L2_Crop	# null object
+
+routine crop_rectangle_get@V4L2_Crop
+    takes crop V4L2_Crop
+    returns V4L2_Rectangle
+    external V4L2_Crop__crop_rectangle_get
+
+    # This routine will return the crop rectangle for {crop} as a
+    # {V4L2_Rectangle} object.
+
+routine new@V4L2_Crop
+    takes_nothing
+    returns V4L2_Crop
+    external V4L2_Crop__new
+
+    # This routine will return a new {V4L2_Crop} object.
+
+routine set@V4L2_Crop
+    takes crop V4L2_Crop
+    takes file_descriptor Integer
+    returns Integer
+    external V4L2_Crop__set
+
+    # This routine will crop facilities for {file_descriptor} to {crop}.
+
+routine type_set@V4L2_Crop
+    takes crop V4L2_Crop
+    takes type V4L2_Buffer_Type
+    returns_nothing
+    external V4L2_Crop__type_set
+
+    # This routine will set the {type} field of {crop}.
+
+
+# {V4L2_Crop_Capability} stuff:
+
+define V4L2_Crop_Capability	# struct v4l2_cropcap *
+    external
+
+external null@V4L2_Crop_Capability V4L2_Crop_Capability	# null object
+
+routine bounds_get@V4L2_Crop_Capability
+    takes crop_capability V4L2_Crop_Capability
+    returns V4L2_Rectangle
+    external V4L2_Crop_Capability__bounds_get
+
+    # This routine will return the {V4L2_Rectangle} object that
+    # contains bounds information from {crop_capability}.
+
+
+routine default_rectangle_get@V4L2_Crop_Capability
+    takes crop_capability V4L2_Crop_Capability
+    returns V4L2_Rectangle
+    external V4L2_Crop_Capability__default_rectangle_get
+
+    # This routine will return the {V4L2_Rectangle} object that
+    # contains default rectangle information from {crop_capability}.
+
+routine new@V4L2_Crop_Capability
+    takes_nothing
+    returns V4L2_Crop_Capability
+    external V4L2_Crop_Capability__new
+
+    # This routine will return a new {V4L2_Crop_Capability} object.
+
+
+routine query@V4L2_Crop_Capability
+    takes crop_capability V4L2_Crop_Capability
+    takes file_descriptor Integer
+    returns Integer
+    external V4L2_Crop_Capability__query
+
+    # This routine will fill in {crop_capability} from the video device
+    # opened on {file_descriptor}.
+
+routine type_get@V4L2_Crop_Capability
+    takes crop_capability V4L2_Crop_Capability
+    returns V4L2_Buffer_Type
+    external V4L2_Crop_Capability__type_get
+
+    # This routine will set the {type} field of {crop_capability}.
+
+routine type_set@V4L2_Crop_Capability
+    takes crop_capability V4L2_Crop_Capability
+    takes type V4L2_Buffer_Type
+    returns_nothing
+    external V4L2_Crop_Capability__type_set
+
+    # This routine will set the {type} field of {crop_capability}.
+
+
+# {V4L2_Field} stuff
+
+define V4L2_Field
+    external					# enum v4l2_field
+
+external any@V4L2_Field V4L2_Field		# V4L2_FIELD_ANY
+external none@V4L2_Field V4L2_Field		# V4L2_FIELD_NONE
+external top@V4L2_Field V4L2_Field		# V4L2_FIELD_TOP
+external bottom@V4L2_Field V4L2_Field		# V4L2_FIELD_BOTTOM
+external interlaced@V4L2_Field V4L2_Field	# V4L2_FIELD_INTERLACED
+external seq_tb@V4L2_Field V4L2_Field		# V4L2_FIELD_SEQ_TB
+external seq_bt@V4L2_Field V4L2_Field		# V4L2_FIELD_SEQ_BT
+external alternate@V4L2_Field V4L2_Field	# V4L2_FIELD_ALTERNATE
+external interlaced_tb@V4L2_Field V4L2_Field	# V4L2_FIELD_INTERLACED_TB
+external interlaced_bt@V4L2_Field V4L2_Field	# V4L2_FIELD_INTERLACED_BT
+
+# {V4L2_Format} stuff:
+
+define V4L2_Format
+    external					# struct v4l2_format *
+
+external null@V4L2_Format V4L2_Format		# null object
+
+routine pixel_format_get@V4L2_Format
+    takes format V4L2_Format
+    returns V4L2_Pixel_Format
+    external V4L2_Format__pixel_format_get
+
+routine new@V4L2_Format
+    takes_nothing
+    returns V4L2_Format
+    external V4L2_Format__new
+
+    # This routine will create and return a new V4L2_format object.
+
+routine set@V4L2_Format
+    takes format V4L2_Format
+    takes file_descriptor Integer
+    returns Integer
+    external V4L2_Format__set
+
+    # This routine will set the format parameters for {file_descriptor}
+    # to {format}.
+
+routine type_get@V4L2_Format
+    takes format V4L2_Format
+    returns V4L2_Buffer_Type
+    external V4L2_Format__type_get
+
+    # This routine will type field of {format}.
+
+
+routine type_set@V4L2_Format
+    takes format V4L2_Format
+    takes type V4L2_Buffer_Type
+    returns_nothing
+    external V4L2_Format__type_set
+
+    # This routine will set the type field of {format} to {type}.
+
+
+# {V4L2_Memory} stuff:
+
+define V4L2_Memory
+    external					# enum v4l2_memory
+
+external mmap@V4L2_Memory V4L2_Memory		# V4L2_MEMORY_MMAP
+external user_pointer@V4L2_Memory V4L2_Memory	# V4L2_MEMORY_USERPTR
+external overlay@V4L2_Memory V4L2_Memory	# V4L2_MEMORY_OVERLAY
+
+# {V4L2_Pixel_Format} stuff:
+
+external rgb332@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_RGB332
+external rgb444@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_RGB444
+external rgb555@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_RGB555
+external rgb565@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_RGB565
+external rgb555x@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_RGB555X
+external rgb565x@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_RGB565X
+external bgr24@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_BGR24
+external rgb24@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_RGB24
+external bgr32@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_BGR32
+external rgb32@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_RGB32
+external grey@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_GREY
+#external y16@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_Y16
+external pal8@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_PAL8
+external yvu410@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YVU410
+external yvu420@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YVU420
+external yuyv@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YUYV
+external uyvy@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_UYVY
+#external vyuy@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_VYUY
+external yuv422p@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YUV422P
+external yuv411p@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YUV411P
+external y41p@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_Y41P
+external yuv444@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YUV444
+external yuf555@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YUV555
+external yuv565@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YUV565
+external yuv32@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YUV32
+external nv12@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_NV12
+external nv21@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_NV21
+#external nv16@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_NV16
+#external nv61@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_NV61
+external yuv410@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YUV410
+external yuv420@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YUV420
+external yyuv@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YYUV
+external hi240@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_HI240
+external hm12@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_HM12
+external sbggr8@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SBGGR8
+#external sgbrg8@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SGBRG8
+#external sgrbg8@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SGRBG8
+external sgrbg10@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SGRBG10
+#external sgrbg10dpcm8@V4L2_Pixel_Format Unsigned # V4L2_PIX_FMT_SGRBG10DPCM8
+#external sbggr16@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SBGGR16
+external mjpeg@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_MJPEG
+external jpeg@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_JPEG
+external dv@V4L2_Pixel_Format Unsigned		# V4L2_PIX_FMT_DV
+external mpeg@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_MPEG
+external wnva@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_WNVA
+external sn9c10x@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SN9C10X
+#external sn9c20x_i420@V4L2_Pixel_Format Unsigned # V4L2_PIX_FMT_SN9C20X_I420
+external pwc1@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_PWC1
+external pwc2@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_PWC2
+external et61x251@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_ET61X251
+#external spca501@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SPCA501
+#external spca505@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SPCA505
+#external spca508@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SPCA508
+#external spca561@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SPCA561
+#external pac207@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_PAC207
+#external mr97310a@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_MR97310A
+#external sq905c@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_SQ905C
+#external pjpg@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_PJPG
+#external yvyu@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_YVYU
+#external ov511@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_OV511
+#external ov518@V4L2_Pixel_Format Unsigned	# V4L2_PIX_FMT_OV518
+
+define V4L2_Pixel_Format
+    external					# struct v4l2_pix_format *
+
+external null@V4L2_Pixel_Format V4L2_Pixel_Format # null object
+
+routine bytes_per_line_get@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    returns Integer
+    external V4L2_Pixel_Format__bytes_per_line_get
+
+    # This routine will set the bytes_per_line field of {pixel_format}.
+
+routine bytes_per_line_set@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    takes bytes_per_line Integer
+    returns_nothing
+    external V4L2_Pixel_Format__bytes_per_line_set
+
+    # This routine will set the bytes per line field of {pixel_format}
+    # to {bytes_per_line}.
+
+routine height_get@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    returns Integer
+    external V4L2_Pixel_Format__height_get
+
+    # This routine will set the height field of {pixel_format}.
+
+routine height_set@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    takes height Integer
+    returns_nothing
+    external V4L2_Pixel_Format__height_set
+
+    # This routine will set the height field of {pixel_format} to {height}.
+
+routine field_set@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    takes field V4L2_Field
+    returns_nothing
+    external V4L2_Pixel_Format__field_set
+
+    # This routine will set field of {pixel_format} to {field}.
+
+routine format_set@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    takes format Unsigned
+    returns_nothing
+    external V4L2_Pixel_Format__format_set
+
+    # This routine will set the pixel format for {pixel_format} to {format}.
+
+routine size_image_get@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    returns Integer
+    external V4L2_Pixel_Format__size_image_get
+
+    # This routine will set the image size field of {pixel_format}.
+
+routine size_image_set@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    takes size_image Integer
+    returns_nothing
+    external V4L2_Pixel_Format__size_image_set
+
+    # This routine will set the image_size field of {pixel_format}
+    # to {size_image}.
+
+routine width_get@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    returns Integer
+    returns_nothing
+    external V4L2_Pixel_Format__width_get
+
+    # This routine will return the width field of {pixel_format}.
+
+routine width_set@V4L2_Pixel_Format
+    takes pixel_format V4L2_Pixel_Format
+    takes width Integer
+    returns_nothing
+    external V4L2_Pixel_Format__width_set
+
+    # This routine will set the width field of {pixel_format} to {width}.
+
+# {V4L2_Rectangle} stuff:
+
+define V4L2_Rectangle
+    external					# struct v4l2_rect *
+
+external null@V4L2_Rectangle V4L2_Rectangle	# null object
+
+routine contents_copy@V4L2_Rectangle
+    takes to_rectangle V4L2_Rectangle
+    takes from_rectangle V4L2_Rectangle
+    returns_nothing
+
+    # This routine will copy the contents of {from_rectangle} into
+    # {to_rectangle}.
+
+    call height_set@(to_rectangle, from_rectangle.height)
+    call left_set@(to_rectangle, from_rectangle.left)
+    call top_set@(to_rectangle, from_rectangle.top)
+    call width_set@(to_rectangle, from_rectangle.width)
+
+
+routine height_get@V4L2_Rectangle
+    takes rectangle V4L2_Rectangle
+    returns Integer
+    external V4L2_Rectangle__height_get
+
+    # This routine will return the height field of {rectangle}.
+
+
+routine height_set@V4L2_Rectangle
+    takes rectangle V4L2_Rectangle
+    takes height Integer
+    returns_nothing
+    external V4L2_Rectangle__height_set
+
+    # This routine will height field of {rectangle} to {height}.
+
+
+routine left_get@V4L2_Rectangle
+    takes rectangle V4L2_Rectangle
+    returns Integer
+    external V4L2_Rectangle__left_get
+
+    # This routine will return the left field of {rectangle}.
+
+
+routine left_set@V4L2_Rectangle
+    takes rectangle V4L2_Rectangle
+    takes left Integer
+    returns_nothing
+    external V4L2_Rectangle__left_set
+
+    # This routine will left field of {rectangle} to {left}.
+
+routine top_get@V4L2_Rectangle
+    takes rectangle V4L2_Rectangle
+    returns Integer
+    external V4L2_Rectangle__top_get
+
+    # This routine will return the top field of {rectangle}.
+
+routine top_set@V4L2_Rectangle
+    takes rectangle V4L2_Rectangle
+    takes top Integer
+    returns_nothing
+    external V4L2_Rectangle__top_set
+
+    # This routine will top field of {rectangle} to {top}.
+
+
+routine width_get@V4L2_Rectangle
+    takes rectangle V4L2_Rectangle
+    returns Integer
+    external V4L2_Rectangle__width_get
+
+    # This routine will return the width field of {rectangle}.
+
+routine width_set@V4L2_Rectangle
+    takes rectangle V4L2_Rectangle
+    takes width Integer
+    returns_nothing
+    external V4L2_Rectangle__width_set
+
+    # This routine will width field of {rectangle} to {width}.
+
+# {V4L2_Request_Buffers} stuff:
+
+define V4L2_Request_Buffers
+    external				# struct v4l2_requestbuffers *
+
+external null@V4L2_Request_Buffers V4L2_Request_Buffers	# null object
+
+routine count_get@V4L2_Request_Buffers
+    takes request_buffers V4L2_Request_Buffers
+    returns Integer
+    external V4L2_Request_Buffers__count_get
+
+    # This routine will return the count field of {request_buffers}.
+
+routine create@V4L2_Request_Buffers
+    takes count Unsigned
+    takes type V4L2_Buffer_Type
+    takes memory V4L2_Memory
+    returns V4L2_Request_Buffers
+    external V4L2_Request_Buffers__create
+
+    # This routine will create a {V4L2_Request_Buffers} object that
+    # contains {count}, {type}, and {memory}.
+
+
+routine request@V4L2_Request_Buffers
+    takes request_buffers V4L2_Request_Buffers
+    takes file_descriptor Integer
+    returns Integer
+    external V4L2_Request_Buffers__request
+
+    # This routine will request the memory buffers specified in
+    # {request_buffers} from the video device attached to {file_descriptor}.
+

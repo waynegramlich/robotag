@@ -1,0 +1,2775 @@
+easy_c 1.0
+
+# Copyright (c) 2010-2011 by Wayne C. Gramlich
+# All rights reserved
+
+library Easy_C
+library Extractor
+library Unix
+library Unix_Dispatch
+library Unix_Termios
+library Map
+library Math
+
+# {host_read@Easy_C} is the routine that processes commands from the host.
+
+
+# The {Marker}, {Segment}, and {Mesh} data structures are used to
+# keep track of the ceiling marker locations read in from tag.ids.
+# The {Mesh} object can be used for path planning.
+
+define Command_Result
+    record
+	command String			# Command sent to coprocessor
+	result String			# Result back from coprocessor
+	retries Unsigned		# Maximum number of retries
+
+define Globals
+    record
+	ceiling Unix_Dispatch[Globals]	# Ceiling {Dispatch} object
+	ceiling_listen Unix_Dispatch[Globals] # Ceiling listen socket
+	ceiling_line String		# One line back from {ceiling}
+	ceiling_is_connected Logical	# {true} if ceiling conn. established
+	command String			# Command from host
+	command_copy String		# A copy of the command string
+	command_results_available Array[Command_Result] # Available for reuse
+	command_results_pending Array[Command_Result] # Waiting for execution
+	constants Constants		# Control constants
+	coprocessor Unix_Dispatch[Globals] # Coprocessor {Dispatch} object
+	coprocessor_in_buffer String	# Input buffer before shifting:
+	coprocessor_debug_buffer String	# Human readable coproccessor command
+	coprocessor_line String		# One line back from {coprocessor}
+	coprocessor_shifted Logical	# {true}=>xmit/receive 8th bit bytes
+	coprocessor_out_buffer String	# Temporary output buffer
+	degrees2radians Double		# 
+	extractor Extractor		# Extractor that contains tag assoc.
+	host Unix_Dispatch[Globals]	# Host {Disptach} object
+	host_line String		# One line back from {host}
+	label String
+	laser_on Logical		# {true}=>laser is on
+	#mesh Mesh			# {Mesh} of {Marker} objects
+	#markers Array[Marker]		# Temporary {Marker} objects
+	map_is_ready Logical		# {true} if map is ready
+	navigate Navigate		# {Navigate} information object
+	text String
+	start_time Long_Integer		# Start time of program
+
+define Grip_Mode	# Grip mode
+    enumeration
+	off		# No change for gripper
+	open		# Gripper open before base moves
+	close		# Gripper closed before base moves
+
+define Lift_Grip_Mode	# Lift mode
+    enumeration
+	off		# No change for lifter
+	before		# Lift-grip-lift cycle
+	grip		# Grip-lift cycle
+	after		# Lift only cycle
+
+define Navigate
+    record
+	bearing Double			# Current bearing
+	bearing_count Unsigned		# Number of times bearing err. to big
+	camera_count Unsigned		# Count of successful camera positions
+	ceiling_bearing Double		# Current ceiling bearing
+	ceiling_camera_on Logical	# {true}=>ceiling camera is on
+	ceiling_time Long_Integer	# Ceiling time stamp
+	ceiling_x Double		# Current camera X location
+	ceiling_y Double		# Current camera Y location
+	current Way			# Current {Way}
+	destination Way			# Destination {Way}
+	destination_name String		# Destination name
+	direction Logical		# {true}=>going backwards
+	enable Unsigned			# Last coprocessor enable level
+	enable_mode Unsigned		# Last coprocessor enable mode
+	enable_label Unsigned		# Last coprocessor enable level
+	enable_why String		# Reason for last enable level change
+	globals Globals			# Globals
+	grip_left_force Unsigned	# Current pressure of left gripper
+	grip_left_limit Unsigned	# Maximum left gripper tine force limit
+	grip_left_position Unsigned	# Current height of left gripper
+	grip_right_force Unsigned	# Current pressure of right gripper
+	grip_right_limit Unsigned	# Maximum right gripper tine force limit
+	grip_right_position Unsigned	# Current height of right gripper
+	label Integer			# Label with current ceiling information
+	level Navigate_Level		# Current enable level in coprocessor
+	lifter_position Unsigned	# Current height of lifter
+	motor_settings_set Logical	# {true}=>Motor settings in coprocessor
+	motor_speed Integer		# Current motor "speed"
+	motor_twist Integer		# Current motor "twist"
+	next Way			# Next {Way} on path
+	state State			# Current state
+	target_bearing Double		# Current target bearing
+	target_direction Logical	# {true}=>go backwards into target
+	target_distance Double		# Current target distance
+	target_name String		# Current target name
+	target_way Way			# Target {Way}
+	target_x Double			# Target X
+	target_y Double			# Target Y
+	temporary String		# Temporary string
+	time Long_Integer		# Current location timestamp
+	visit Visit			# Current visit node
+	visits Array[Visit]		# List of way points to visit (in order)
+	x Double			# Current X position
+	y Double			# Current Y position
+	zoom_way Way			# {Way} for zooming to
+	zoom_counter Unsigned		# UID for zoom (i.e. temporary) ways
+
+define Navigate_Level			# Level of navigation enabled
+    enumeration
+	off				# Navigation is disabled
+	camera				# Camera is on
+	turn				# Robot can turn
+	move				# Robot can move
+
+define Segment			# Segment to interconnect {Marker} objects
+    record
+	name String		# Segment name ("name1:name2")
+	#marker1 Marker		# Marker with lexically earlier name
+	#marker2 Marker		# Marker with lexically later name
+	distance Double		# Distance between markers
+
+define State
+    enumeration
+	idle			# Waiting for a destination
+	plan			# Planning state
+	turn			# Turn towards target
+	move			# Move towards target
+
+define Update_Reason
+    enumeration
+	ceiling			# New ceiling information
+	coprocessor_done	# Coprocessor commands are done
+	coprocessor_error	# Coprocessor had an error
+	coprocessor_location	# Location came back from coprocessor
+	goto			# New destination supplied
+	halt			# Halt everything
+	location		# Get the current location/bearing
+	position		# Set the current location/bearing
+	target			# New target was supplied
+	timeout			# Timer triggered
+
+define Visit			# Way point to vist
+    record
+	focus Way		# {Way} that is focus of visit (or {null@Way})
+	mode Visit_Mode		# Visit mode
+	path_height Double	# Prefered lift height along path
+	way Way			# {Way} to visit
+
+define Visit_Mode		# Grab, Release, or other Way
+    enumeration
+	grab_before		# Grab gateway before
+	grab			# Grab way
+	grab_after		# Grab gateway after
+	release_before		# Release gateway before
+	release			# Release way
+	release_after		# Release gateway after
+
+# Coprocessor commands:
+#
+#    A {position} {delta}
+#	Move axles to {position} within {delta}
+#    B {bearing_limit} {target_limit} {motor_limit} {motor_stall}
+#	Set the 4 constants for movement
+#    C
+#	Show shaft counts
+#    D
+#	General purpose debug values are shown
+#    E {level}
+#	Set enable level:
+#	    0 => everything shut down
+#	    1 => target distance/bearing computation allowed
+#	    2 => turning is permitted
+#	    3 => forward motion is permitted
+#    F
+#	Flush the robus buffer
+#    G {laser_on_off}
+#	Turn the laser on/off
+#    I
+#	Print identity of current module
+#    K {k_turn_p} {k_turn_i} {k_turn_d} {k_linear} {}
+#	Set the feedback coefficents for linear and turning
+#    L
+#	Show Shaft2 location information
+#    M {left} {right}
+#	Set motor speeds to {left} and {right}.
+#    N {delta} {speed}
+#	Navigate to {target within {delta} units
+#    P {x} {y} {bearing}
+#	Set current position to ({x}, {y}) and {bearing}.
+#    Q {speed}
+#	Show shaft counter values when both motors are at {speed}
+#    R {desired_bearing}
+#	Turn to desired bearing.
+#    S {address}
+#	Select module at {address}
+#    T {x} {y}
+#	Set target to ({x}, {y})
+#    X {byte}
+#	Send {byte} to currently selected module
+#    Z
+#	Scan the bus
+
+# {Easy_C} routines:
+
+routine main@Easy_C
+    takes arguments Array[String]
+    returns Integer
+
+    call d@("Brain\n\")
+
+    start_time :@= get_time_of_day@Unix()
+
+    debug_stream :@= error@Out_Stream
+    #mesh :@= read@Mesh("tag.ids")
+    #call show@(mesh, debug_stream)
+    #call path_test@(mesh, debug_stream)
+
+    # Kludge to allow changing of video device:
+    video_device_name :@= "/dev/video0"
+    serial_device_name :@= "/dev/ttyS0"
+    host_internet_address :@= "192.168.1.5"
+    size :@= arguments.size
+    if size >= 2
+	video_device_name := arguments[1]
+    if size >= 3
+	serial_device_name := arguments[2]
+    if size >= 4
+	host_internet_address := arguments[3]
+
+    # Make a connection to the femtocom socket (if it exists):
+    femtocom_socket :@= socket_stream_create@Unix()
+    assert femtocom_socket >= 0i
+    # We do not care how long it takes:
+    call non_blocking@Easy_C(femtocom_socket)
+    internet_address :@= internet_address_lookup@Unix("localhost")
+    result :@= connect@Unix(femtocom_socket, internet_address, 1234)
+    # Because we are non-blocking, {result} will be negative.  If we
+    # really care, we should check to see that errno is set to EINPROGRESS.
+
+    # Create {globals} here and fill it in a little later:
+    globals :@= one_and_only@Globals()
+    dispatcher :@= create@Unix_Dispatcher[Globals](globals)
+    #call timeout_enable@(dispatcher, 1, 0, timeout_routine@Easy_C)
+    call timeout_enable@(dispatcher, 0, 500000, timeout_routine@Easy_C)
+
+    # If tags.xml exists, read it in:
+    extractor :@= create@Extractor()
+    map :@= extractor.map
+    #call map_read@(map, "tags.xml")
+
+    # When the map is updated, send the changes up to {host}:
+    map.neighbor_updated := neighbor_updated@Easy_C
+    map.tag_updated := tag_updated@Easy_C
+
+    # Fill in {globals}:
+    globals.ceiling := closed_allocate@(dispatcher, "ceiling")
+    globals.ceiling_is_connected := 0f
+    globals.ceiling_line := new@String()
+    globals.ceiling_listen := listen_allocate@(dispatcher,
+      "ceiling_listen", "localhost", 7777, 1, ceiling_accept@Easy_C)
+    globals.command_copy := new@String()
+    globals.constants := empty_create@Constants()
+    globals.coprocessor := serial_allocate@(dispatcher, "coprocessor",
+      serial_device_name, 115200, coprocessor_read@Easy_C)
+    if globals.coprocessor.file_socket_number < 0i
+	call d@(form@("Unable to open serial device %v%\n\") /
+	  f@(serial_device_name))
+	return 1i
+    globals.coprocessor_in_buffer := new@String()
+    globals.coprocessor_out_buffer := new@String()
+    globals.coprocessor_line := new@String()
+    globals.coprocessor_debug_buffer := new@String()
+    globals.coprocessor_shifted := 1t
+    globals.command := new@String()
+    globals.command_results_available := new@Array[Command_Result]()
+    globals.command_results_pending := new@Array[Command_Result]()
+    globals.degrees2radians := 3.14159265358979323846 / 180.0
+    globals.extractor := extractor
+    globals.host := connect_allocate@(dispatcher,
+      "host", host_internet_address, 5432, host_read@Easy_C)
+    globals.host_line := new@String()
+    globals.label := new@String()
+    globals.laser_on := 0f
+    globals.map_is_ready := 0f
+    globals.navigate := create@Navigate(globals)
+    globals.text := new@String()
+    globals.start_time := start_time
+      
+    # Send three Control-G's to {coprocessor}:
+    #call write@(globals.coprocessor, "\7,7,7\")
+
+    # Send three Control-T's to {coprocesssor} to force it into "shifted" mode:
+    call write@(globals.coprocessor, "\20,20,20\")
+
+    # Fork/exec tag extractor for ceiling camera:
+    environment :@= environment_all@Unix()
+    args :@= new@Array[String]()
+    program :@= "./Video_Extract"
+    call append@(args, program)
+    call append@(args, video_device_name)
+
+    if fork@Unix() = 0i
+	call execve@Unix(program, args, environment)
+	call d@("Exec failed\n\")
+	assert 0f
+
+    # Enter the dispatch loop:
+    call dispatch_loop@(dispatcher)
+
+    # Close {device_name}:
+    assert close@Unix(femtocom_socket) = 0i
+
+    return 0i
+
+
+routine ceiling_accept@Easy_C
+    takes ceiling_listen Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine is invoked when a connection from the Ceiling process
+    # occurs.
+
+    # Extract some values from {globals}:
+    globals :@= ceiling_listen.globals
+    ceiling :@= globals.ceiling
+    constants :@= globals.constants
+    extractor :@= globals.extractor
+    map :@= extractor.map
+    map_is_ready :@= globals.map_is_ready
+
+    # Establish {ceiling} stream connection:
+    call accept@(ceiling_listen, ceiling, ceiling_read@Easy_C)
+    globals.ceiling_is_connected := 1t
+
+    # If the {map_is_ready}, send {map} to {ceiling}:
+    if map_is_ready
+	call send@(map, ceiling, "ceiling_accept@Easy_C")
+
+    # Always send the constants down:
+    call send@(constants, ceiling)
+
+
+routine ceiling_read@Easy_C
+    takes ceiling Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine is invoked when there input to be handled from {ceiling}.
+
+    # Extract some values {ceiling} and {globals}"
+    globals :@= ceiling.globals
+    extractor :@= globals.extractor
+    pi :@= extractor.pi
+    map :@= extractor.map
+    input_buffer :@= ceiling.input_buffer
+    size :@= input_buffer.size
+
+    #call d@(form@("=>ceiling_read@Easy_C(): %v%\n\") / f@(input_buffer))
+
+    if size = 0
+	# We lost the connection.  This is bad:
+	call d@("Lost connection to ceiling camera\n\")
+	#FIXME: We should recover better than this!!!
+	assert 0f
+	globals.ceiling_is_connected := 0f
+    else
+	# Scan characters in {input_buffer} into lines in {ceiling_line}:
+	ceiling_line :@= globals.ceiling_line
+	index :@= 0
+	while index < size
+	    character :@= input_buffer[index]
+	    call character_append@(ceiling_line, character)
+	    if character = '\n\'
+		# We have a complete line of data in {ceiling_line}:
+		# It should have the basic format of {id x y bearing}
+
+		#call d@(form@("Br:ceiling_line=%v%\n\") / f@(ceiling_line))
+
+		# Grab the first {character} and make sure it is a '@':
+		character := lop@(ceiling_line)
+		if character != '@'
+		    # Ick, it is supposed to start with '@' -- punt:
+		    call d@(form@("cl=%v%, got %c%, not '@'\n\") %
+		      f@(ceiling_line) / f@(character))
+		    break
+
+		# The next character specifies the record type:
+		character := lop@(ceiling_line)
+		switch character
+		  case 'L'
+		    # Location {id} {x} {y} {bearing} {count} <repeat>...
+
+		    # Now parse each record of "<id angle x y uid>":
+		    degrees2radians :@= globals.degrees2radians
+
+		    # Get a {temporary} string to load stuff into:
+		    navigate :@= globals.navigate
+		    temporary :@= navigate.temporary
+		    call trim@(temporary, 0)
+
+		    # Parse the tag id, x, y, and angle as integers:
+		    closest_ceiling_id :@= unsigned_lop@(ceiling_line)
+		    closest_ceiling_x :@= double_lop@(ceiling_line)
+		    closest_ceiling_y :@= double_lop@(ceiling_line)
+		    closest_ceiling_bearing :@=
+		      double_lop@(ceiling_line) * pi / 180.0
+		    ceiling_count :@= unsigned_lop@(ceiling_line)
+
+		    # Start constructing the string in {temporary}:
+		    call string_append@(temporary,
+		      form@("%d% %2f% %2f% %2f% %d%") %
+		      f@(closest_ceiling_id) %
+		      f@(closest_ceiling_x) % f@(closest_ceiling_y) %
+		      f@(closest_ceiling_bearing * 180.0 / pi) /
+		      f@(ceiling_count))
+
+		    # Fetch the rest of the data:
+		    ceiling_index :@= 0
+		    while ceiling_index < ceiling_count
+			# Read the next batch of values:
+			ceiling_id :@= unsigned_lop@(ceiling_line)
+			ceiling_x :@= double_lop@(ceiling_line)
+			ceiling_y :@= double_lop@(ceiling_line)
+			ceiling_bearing :@=
+			  double_lop@(ceiling_line) * pi / 180.0
+
+			# Load the values back into {temporary}:
+			call string_append@(temporary,
+			  form@(" %d% %2f% %2f% %2f%") %
+			  f@(ceiling_id) % f@(ceiling_x) % f@(ceiling_y) /
+			  f@(ceiling_bearing * 180.0 / pi))
+
+			ceiling_index := ceiling_index + 1
+
+		    # OK, we got the data:
+		    if closest_ceiling_id != 0
+			# Load updated location/bearing into {navigate}:
+
+		        navigate.ceiling_bearing := closest_ceiling_bearing
+			navigate.ceiling_x:= closest_ceiling_x
+			navigate.ceiling_y := closest_ceiling_y
+
+			closest_tag :@= tag_lookup@(map, closest_ceiling_id,
+			  "ceiling_read@Easy_C 'L'")
+			closest_way :@= closest_way@(closest_tag,
+			  closest_ceiling_x, closest_ceiling_y)
+			navigate.current := closest_way
+
+			# For now, do not update position based on ceiling
+			#navigate.bearing := closest_ceiling_bearing
+			#navigate.x := closest_ceiling_x
+			#navigate.y := closest_ceiling_y
+
+			# Let host know that there is a new position:
+			time :@= get_time_of_day@Unix()
+			call write@(globals.host,
+			  form@("@C %d% %s%\n\") %
+			  f@(time - globals.start_time) / f@(temporary))
+
+			call d@(form@("B:B2H:@C %s%\n\") / f@(temporary))
+
+			# Make coprocessor shout out its location:
+			#call coprocessor_location_get@(globals)
+
+			# Kick the {navigate} state machine:
+			call update@(globals.navigate,
+			  ceiling@Update_Reason, "ceiling")
+		  case 'T'
+		    # Tag {id} {x} {y} {angle} {edge_length}:
+		    #call d@("Br:Have tag\n\")
+		    tag_id :@= unsigned_lop@(ceiling_line)
+		    tag_x :@= double_lop@(ceiling_line)
+		    tag_y :@= double_lop@(ceiling_line)
+		    tag_angle :@= double_lop@(ceiling_line) * pi / 180.0
+		    tag_edge_length :@= double_lop@(ceiling_line)
+		    call d@(form@(
+		      "B:C2B:@T %d% %2f% %2f% %2f% %4f%\n\") %
+		      f@(tag_id) % f@(tag_x) % f@(tag_y) %
+		      f@(tag_angle * 180.0 / pi) / f@(tag_edge_length))
+		    if tag_exists@(map, tag_id)
+			tag :@=  tag_lookup@(map,
+			  tag_id, "ceiling_read@Easy_C 'T'")
+			call update@(tag, tag_x, tag_y, tag_angle,
+			  tag_edge_length, "B:C2B:T...", 0)
+		    else
+			tag :@= tag_create@(map,
+			  tag_id, tag_x, tag_y, tag_angle, tag_edge_length,
+			  "ceiling_read@Easy_C 'T' create")
+			#call map_update@(map, "B:C2B:T ...", 0)
+			call map_update@(map, "B:C2B:T ...", 0xffffff00)
+		  case 'N'
+		    # Neighbor {oid} {tid} {tangle} {tbear} {tdist} {goodness}:
+		    origin_id :@= unsigned_lop@(ceiling_line)
+		    target_id :@= unsigned_lop@(ceiling_line)
+		    target_angle :@= double_lop@(ceiling_line) * pi /180.0
+		    target_bearing :@= double_lop@(ceiling_line) * pi / 180.0
+		    target_distance :@= double_lop@(ceiling_line)
+		    goodness_metric :@= double_lop@(ceiling_line)
+
+		    origin_tag :@= tag_lookup@(map, origin_id,
+		      "ceiling_read@Easy_C 'N1'")
+		    target_tag :@= tag_lookup@(map, target_id,
+		      "ceiling_read@Easy_C 'N2'")
+		    if neighbor_exists@(origin_tag, target_tag)
+			neighbor :@= neighbor_lookup@(origin_tag, target_tag, 
+			  "Br:ceiling_read@Easy_C N")
+			call update@(neighbor, goodness_metric, target_angle,
+			  target_bearing, target_distance)
+		    else
+			neighbor :@= create@Tag_Neighbor(origin_tag,
+			  target_tag, target_angle, target_bearing,
+			  target_distance, goodness_metric, 0xffffff00)
+		  default
+		    call d@(form@("Ceiling process: Bad character (%v%)\n\") /
+		      f@(character))
+		    assert 0f
+		
+		# Make sure {ceiling_line} is totally empty:
+		call trim@(ceiling_line, 0)
+	    index := index + 1
+
+	# We are done with {ceiling_line}, clear it out for the next line:
+	call trim@(ceiling_line, 0)
+
+    #call d@(form@("<=ceiling_read@Easy_C(): %v%\n\") / f@(input_buffer))
+
+
+routine coprocessor_read@Easy_C
+    takes coprocessor Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine is invoked each time there is I/O that needs to
+    # be processed from {coprocessor}.
+
+    # Extract some values from {coprocessor}:
+    globals :@= coprocessor.globals
+    input_buffer :@= coprocessor.input_buffer
+
+    # Extract some values from {globals}:
+    extractor :@= globals.extractor
+    command_results_available :@= globals.command_results_available
+    command_results_pending :@= globals.command_results_pending
+    coprocessor_in_buffer :@= globals.coprocessor_in_buffer
+    coprocessor_line :@= globals.coprocessor_line
+    coprocessor_shifted :@= globals.coprocessor_shifted
+    navigate :@= globals.navigate
+
+    # Set {debug} to {true@Logical} to enable debug tracing:
+    debug :@= 0f # 1t
+    if debug
+	call d@(form@("=>coprocessor_read@(): pend=%d% avail=%d%\n\") %
+	  f@(command_results_pending.size) /
+          f@(command_results_available.size))
+
+    # Deal with empty {input_buffer}:
+    size :@= input_buffer.size
+    if size = 0
+	# Yikes we lost the robot connection:
+	call d@("Lost coprocessor connection\n\")
+	assert 0f
+    else
+	# We have some data in {input_buffer} to process:
+
+	# Convert the contents of {input_buffer} into {coprocessor_buffer}
+	# dealing with extraneous characters and character shifting:
+	call trim@(coprocessor_in_buffer, 0)
+	index :@= 0
+	while index < size
+	    # Grab {character} from {input_buffer} and figure out if
+	    # {eight_bit_set}:
+	    character :@= input_buffer[index]
+	    eigth_bit_set :@= character & '\128\' != '\0\'
+
+	    # When the coprocessor is in shifted mode all I/O occurs with the
+	    # 8th bit set.  Anything without the 8th bit set is dropped.  This
+	    # takes care of spurious I/O on the serial port from Linux console
+	    # messages.  In non-shifted mode, the exact reverse occurs,
+	    # characters with the 8th bit set are dropped and characters
+	    # with the 8th bit clear are kept:
+	    if eigth_bit_set &&  coprocessor_shifted ||
+	      !eigth_bit_set && !coprocessor_shifted 
+		# We have a valid {character}; strip off 8th bit if set, and
+		# append to {coprocessor_in_buffer}:
+		call character_append@(coprocessor_in_buffer,
+		  character & '\127\')
+	    # else we have a bogus character and ignore it:
+
+	    index := index + 1
+	# Now {coprocessor_in_buffer} contains the unshifted data with all
+	# extraneous characters removed.
+
+	if debug
+	    call d@(form@("=>coprocessor_read@(): in_buffer=%v%\n\") /
+	      f@(coprocessor_in_buffer))
+
+	# Get the current {command_result} and associated {result}:
+	command_result :@= null@Command_Result
+	result :@= null@String
+	if command_results_pending.size = 0
+	    #FIXME: Memory leak!!!
+	    result := new@String()
+	else
+	    command_result := command_results_pending[0]
+	    result := command_result.result
+
+	# Keep track if errors occured:
+	error_occured :@= 0f
+
+	# Iterate across {coprocessor_buffer} one character at a time:
+	index := 0
+	while index < coprocessor_in_buffer.size
+	    # Grab the {character} from {coprocessor_in_buffer}:
+	    character :@= coprocessor_in_buffer[index]
+
+	    # Keep appending {character} to {coprocessor_line} until
+	    # a new-line character, greater than, or question mark
+	    # is encountered:
+	    call character_append@(coprocessor_line, character)
+
+	    # Treat '?', '>', and '\n\' specially:
+	    switch character
+	      case '?'
+		# A '?' means an error occurred:
+		error_occured := 1t
+	      case '>'
+		# We have finished the current command:
+		call string_append@(result, coprocessor_line)
+		call trim@(coprocessor_line, 0)
+
+		# Are there any errors:
+		if error_occured
+		    # We had an error, consider a retry:
+		    retries :@= command_result.retries
+		    if retries > 0
+			# Yes, resend the same command:
+			retries := retries - 1
+			command_result.retries := retries
+			call coprocessor_write@(globals,
+			  command_result.command, "retries")
+		    else
+			# We are done with retries, output an error message:
+			call d@(form@("Cop Err: cmd=%v% result=%v%\n\") %
+			  f@(command_result.command) /
+			  f@(command_result.result))
+
+			# We stop this command and all following ones:		
+			call array_append@(command_results_available,
+			  command_results_pending)
+			call trim@(command_results_pending, 0)
+
+			# Let {navigate} know we are done and why:
+			call update@(navigate,
+			  coprocessor_error@Update_Reason, "copr errors")
+		else
+		    # No errors:
+		    if command_results_pending.size = 0
+			call d@("Pending list is empty!\n\")
+		    else
+			# Move the {current_result} to done list:
+			assert lop@(command_results_pending) == command_result
+			call append@(command_results_available, command_result)
+			
+		    # See if there is another command to process:
+		    if command_results_pending.size = 0
+			# Let {navigate} know we are done processing commands:
+			call update@(navigate,
+			  coprocessor_done@Update_Reason, "copr done")
+		    else
+			# Process the next command:
+			command_result := command_results_pending[0]
+			result := command_result.result
+			call coprocessor_write@(globals,
+			  command_result.command, "next")
+	      case '\n\'
+		# {coprocessor_line} has an entire line to process.
+
+		call d@(form@("B:C2B:cop_line=%v%\n\") / f@(coprocessor_line))
+
+		time :@= get_time_of_day@Unix()
+		#call write@(globals.host, form@("@B %d% %v%\n\") %
+		#  f@(time - globals.start_time) / f@(coprocessor_line))
+
+		# Any line that starts with ':L' is a location line
+		# that we parse and stuff away into {navigate}:
+
+		if coprocessor_line.size >= 2 &&
+		  coprocessor_line[0] = ':' && coprocessor_line[1] = 'L'
+		    # We have a location record:
+		    pi :@= extractor.pi
+		    call range_delete@(coprocessor_line, 0, 2)
+
+		    call d@(form@("B:C2B:cop_line1=%v%\n\") / f@(coprocessor_line))
+		    encoders_x :@= 
+		      double@(hex_integer_lop@(coprocessor_line)) / 10.0
+		    #call d@(form@("cop_line2=%v% encoders_x=%2f%\n\") %
+		    #  f@(coprocessor_line) / f@(encoders_x))
+		    encoders_y :@=
+		      double@(hex_integer_lop@(coprocessor_line)) / 10.0
+		    encoders_bearing :@= (pi / 180.0) *
+		      double@(hex_integer_lop@(coprocessor_line))
+		    encoders_target_bearing :@= (pi / 180.0) *
+		      double@(hex_integer_lop@(coprocessor_line))
+		    encoders_target_distance :@=
+		      double@(hex_integer_lop@(coprocessor_line)) / 10.0
+		    encoders_enable :@= 
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    encoders_mode :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    encoders_label :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    motor_speed :@= hex_integer_lop@(coprocessor_line)
+		    motor_twist :@= hex_integer_lop@(coprocessor_line)
+		    debug_lift_grip_mode :@= hex_integer_lop@(coprocessor_line)
+		    debug_lifter_height :@= hex_integer_lop@(coprocessor_line)
+		    debug_motor_left :@= hex_integer_lop@(coprocessor_line)
+		    debug_motor_right :@= hex_integer_lop@(coprocessor_line)
+		    navigate.grip_left_position :=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    navigate.grip_right_position :=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    navigate.grip_left_force :=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    navigate.grip_right_force :=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    debug_done_flags :@= hex_integer_lop@(coprocessor_line)
+		
+		    if encoders_x < 100000.0 && encoders_y < 100000.0
+			navigate.x := encoders_x
+			navigate.y := encoders_y
+			navigate.bearing := encoders_bearing
+			navigate.target_bearing := encoders_target_bearing
+			navigate.target_distance := encoders_target_distance
+			navigate.time := get_time_of_day@Unix()
+			navigate.enable := encoders_enable
+			navigate.enable_mode := encoders_mode
+			navigate.enable_label := encoders_label
+			navigate.motor_twist := motor_twist
+			navigate.motor_speed := motor_speed
+
+			call write@(globals.host, form@(
+			  "@L %d% %2f% %2f% %2f% %2f% %2f% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d%\n\") %
+			  f@(navigate.time - globals.start_time) %
+			  f@(navigate.x) % f@(navigate.y) %
+			  f@(navigate.bearing * 180.0 / pi) %
+			  f@(navigate.target_bearing * 180.0 / pi) %
+			  f@(navigate.target_distance) %
+			  f@(navigate.enable) % f@(navigate.enable_mode) %
+			  f@(navigate.enable_label) % f@(motor_speed) %
+			  f@(motor_twist) % f@(debug_lift_grip_mode) %
+			  f@(debug_lifter_height) % f@(debug_motor_left) %
+			  f@(debug_motor_right) %
+			  f@(navigate.grip_left_position) %
+			  f@(navigate.grip_right_position) %
+			  f@(navigate.grip_left_force) %
+			  f@(navigate.grip_right_force) /
+			  f@(debug_done_flags))
+		        call d@(form@(
+			  "B:B2H:@L %d% %2f% %2f% %2f% %2f% %2f% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d% %d%\n\") %
+			  f@(navigate.time - globals.start_time) %
+			  f@(navigate.x) % f@(navigate.y) %
+			  f@(navigate.bearing * 180.0 / pi) %
+			  f@(navigate.target_bearing * 180.0 / pi) %
+			  f@(navigate.target_distance) %
+			  f@(navigate.enable) % f@(navigate.enable_mode) %
+			  f@(navigate.enable_label) % f@(motor_speed) %
+			  f@(motor_twist) % f@(debug_lift_grip_mode) %
+			  f@(debug_lifter_height) % f@(debug_motor_left) %
+			  f@(debug_motor_right) %
+			  f@(navigate.grip_left_position) %
+			  f@(navigate.grip_right_position) %
+			  f@(navigate.grip_left_force) %
+			  f@(navigate.grip_right_force) /
+			  f@(debug_done_flags))
+
+		    # Mark {Navigate} object as updated:
+		    call update@(navigate,
+		      coprocessor_location@Update_Reason, "copr loc")
+		else_if coprocessor_line.size >= 2 &&
+		  coprocessor_line[0] = ':' && coprocessor_line[1] = 'P'
+		    # We have a position record:
+		    call range_delete@(coprocessor_line, 0, 2)
+		    navigate.lifter_position :=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    navigate.grip_left_position :=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    navigate.grip_right_position :=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    navigate.grip_left_force :=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    navigate.grip_right_force :=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		else_if coprocessor_line.size >= 2 &&
+		  coprocessor_line[0] = ':' && coprocessor_line[1] = 'G'
+		    # We have a gripper record:
+		    call range_delete@(coprocessor_line, 0, 2)
+		    left_position :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    right_position :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    left_target :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    right_target :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    left_force :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    right_force :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    left_limit :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    right_limit :@=
+		      unsigned@(hex_integer_lop@(coprocessor_line))
+		    flag :@= unsigned@(hex_integer_lop@(coprocessor_line))
+
+		    call write@(globals.host, form@(
+		      "@G %d% %d% %d% %d% %d% %d% %d% %d% %d% %d%\n\") %
+		      f@(navigate.time - globals.start_time) %
+		      f@(left_position) % f@(right_position) %
+		      f@(left_target) % f@(right_target) %
+		      f@(left_force) % f@(right_force) %
+		      f@(left_limit) % f@(right_limit) / f@(flag))
+		else_if coprocessor_line.size >= 2 &&
+		  is_letter@(coprocessor_line[0]) && coprocessor_line[1] = ' '
+		    # We have a command echo:
+		    do_nothing
+		else
+		    # For now, append {coprocessor_line} to {result}:
+		    call string_append@(result, coprocessor_line)
+		    call write@(globals.host, coprocessor_line)
+		call trim@(coprocessor_line, 0)	
+	      default
+		# There is nothing special about {character}:
+		do_nothing
+
+	    index := index + 1
+
+    if debug
+	call d@(
+	  form@("<=coprocessor_read@(): pend=%d% avail=%d%\n,n\") %
+	  f@(command_results_pending.size) /
+          f@(command_results_available.size))
+
+
+routine host_read@Easy_C
+    takes dispatch Unix_Dispatch[Globals]
+    returns_nothing
+
+    # This routine is invoked whenever that is data to be read from the host.
+
+    # Fetch some fields from {dispatch}:
+    input_buffer :@= dispatch.input_buffer
+    globals :@= dispatch.globals
+    extractor :@= globals.extractor
+    map :@= extractor.map
+    pi :@= extractor.pi
+
+    # See whether or not we got data or a broken connection:
+    size :@= input_buffer.size
+    if size = 0
+	# We lost the connect from the host:
+	call d@("Lost host connection\n\")
+
+	# Do we really want to exit?
+	call exit@System(1)
+    else
+	# We got some data:
+
+	call d@(form@("Got %v% from host\n\") / f@(input_buffer))
+
+	# Fetch some fields from and {globals}:
+        command :@= globals.command
+	navigate :@= globals.navigate
+	host_line :@= globals.host_line
+	label :@= globals.label
+
+	# Process each character from {input_buffer}:
+	index :@= 0
+	while index < size
+	    # Get next character from {input_buffer}:
+	    character :@= input_buffer[index]
+
+	    # Process buffered command when a new-line is entered:
+	    if character = '\n\'
+		# Strip off {command} name:
+		call white_space_lop@(host_line, null@String)
+		call word_lop@(host_line, command)
+		call white_space_lop@(host_line, null@String)
+
+		# Process {command}:
+		call d@(form@("H2Br:command=%v% rest=%v%\n\") %
+		  f@(command) / f@(host_line))
+		if partial_match@(command, "camera") >= 2
+		    # camera 1/0
+		    #    Turn camera on or off:
+		    camera_on :@= unsigned_lop@(host_line) != 0
+		    call ceiling_camera@(navigate, camera_on)
+		else_if partial_match@(command, "constants") >= 3
+		    # Create {constants}:
+		    constants :@= globals.constants
+		    call d@(form@("Br:constants_line=%v%\n\") / f@(host_line))
+		    call line_parse@(constants, host_line)
+		    call d@(form@("sending cdx=%2f% cdy=%2f%\n\") %
+		      f@(constants.camera_dx) / f@(constants.camera_dy))
+
+		    # Send {constants} down to {ceiling}:
+		    ceiling :@= globals.ceiling
+		    if globals.ceiling_is_connected
+			call d@(form@("Br=>Vid: cdx=%2f% cdy=%2f%\n\") %
+			  f@(constants.camera_dx) / f@(constants.camera_dy))
+			call send@(constants, ceiling)
+		else_if partial_match@(command, "coprocessor") >= 3
+		    # coprocessor command ...
+		    #    Send {command ...} down to coprocessor:
+		    call coprocessor_command@(globals, host_line, 0, "host_cmd")
+		else_if partial_match@(command, "delete_segment") >= 8
+		    # delete_segment way1_tag_id way1_id way2_tag_id way2_id :
+		    call segment_delete_parse@(map, host_line)
+		    #call d@("Br:delete_segment\n\")
+		else_if partial_match@(command, "delete_way") >= 8
+		    # delete_way way_tag_id way_id:
+		    way :@= way_delete_parse@(map, host_line)
+		    call d@(form@("delete_way t1=%d% w1=%d%\n\") %
+		      f@(way.tag.id) / f@(way.id))
+		else_if partial_match@(command, "goto") >= 2
+		    # goto label
+		    #    Cause robot to goto {label}
+		    destination_name :@= navigate.destination_name
+		    call string_lop@(host_line, destination_name, "Br:goto")
+
+		    call d@(form@("br: goto %s%\n\") / f@(destination_name))
+		    destination :@= way_name_lookup@(map, destination_name)
+		    if destination == null@Way
+			call d@(form@("Could not find destination %v%\n\") /
+			  f@(destination_name))
+		    else
+		        navigate.destination := destination
+			call visits_append@(navigate, destination,
+			  null@Way, 0.0, grab_before@Visit_Mode)
+			call update@(navigate, goto@Update_Reason, "goto")
+		else_if partial_match@(command, "grab") >= 2
+		    # Grab
+		    open_close :@= unsigned_lop@(host_line)
+		    call d@(form@("H=>Br:grab %d%\n\") / f@(open_close))
+		    call coprocessor_constants_set@(globals)
+		    switch open_close
+		      case 0
+			# Open:
+			#call coprocessor_lift_grip@(globals,
+			#  1t, 0x240, 0x230, 0x300, 0xc0, 1t)
+		      case 1
+			# Close:
+			#call coprocessor_lift_grip@(globals,
+			#  1t, 0x240, 0x230, 0x200, 0x180, 0f)
+		    call coprocessor_level@(navigate,
+		      turn@Navigate_Level, "grab")
+		else_if partial_match@(command, "halt") >= 1
+		    # halt
+		    #    Cause robot to halt:
+		    call update@(navigate, halt@Update_Reason, "halt")
+		else_if partial_match@(command, "location") >= 1
+		    # location
+		    #    Cause location to be fetched:
+		    call update@(navigate, location@Update_Reason, "location")
+		else_if partial_match@(command, "map_ready") >= 2
+		    # map_done:
+		    globals.map_is_ready := 1t
+		    if globals.ceiling_is_connected
+			call send@(map, globals.ceiling, "host_read@Easy_C")
+		else_if partial_match@(command, "move") >= 2
+		    # move grab_way_name release_way_name
+		    grab_way_name :@=
+		      string_lop@(host_line, null@String, "move:grab")
+		    release_way_name :@=
+		      string_lop@(host_line, null@String, "move:release")
+		    call d@(form@("Br:move (start) %v% %v%\n\") %
+		      f@(grab_way_name) / f@(release_way_name))
+
+		    # Look up {grab_way} and {release way}:
+		    grab_way :@= way_name_lookup@(map, grab_way_name)
+		    release_way :@= way_name_lookup@(map, release_way_name)
+		    call d@(form@("Grab=%w% Release=%w%\n\") %
+		      f@(grab_way) / f@(release_way))
+
+		    # Find the gateways for {grab_way} and {release_way}:
+		    grab_gateway :@= gateway@(grab_way)
+		    release_gateway :@= gateway@(release_way)
+		    call d@(form@("Grab_GW=%w% Release_GW=%w%\n\") %
+		      f@(grab_gateway) / f@(release_gateway))
+
+		    # Make sure we have the gateways:
+		    visit :@= null@Visit
+		    if grab_gateway == null@Way || release_gateway == null@Way
+			call d@(form@("Move not allowed from %v% to %v%\n\") %
+			  f@(grab_way_name) / f@(release_way_name))
+		    else
+			# Fill in {visits} path:
+			call visits_clear@(navigate)
+			grab_height :@= grab_way.height
+			release_height :@= release_way.height
+			top_height :@= maximum@(grab_height, release_height)
+
+			visit := visits_append@(navigate, grab_gateway,
+			  grab_way, top_height, grab_before@Visit_Mode)
+			call visits_append@(navigate, grab_way,
+			  grab_way, top_height, grab@Visit_Mode)
+			call visits_append@(navigate, grab_gateway,
+			  grab_way, top_height, grab_after@Visit_Mode)
+			call visits_append@(navigate, release_gateway,
+			  release_way, top_height, release_before@Visit_Mode)
+			call visits_append@(navigate, release_way,
+			  release_way, top_height, release@Visit_Mode)
+			call visits_append@(navigate, release_gateway,
+			  release_way, top_height, release_after@Visit_Mode)
+
+		        # Path planner starts with the first way from {visits}:
+			navigate.visit := visit
+			navigate.destination := visit.way
+			call update@(navigate, goto@Update_Reason, "move")
+
+			call d@(form@("Br:move (end) %v% %v%\n\") %
+			  f@(grab_way.name) / f@(release_way.name))
+			call visits_log@(navigate, "move cmd", 0xffffff00)
+		else_if partial_match@(command, "position") >= 1
+		    # position x y bearing
+		    #     Set current pos to ({x}, {y}, {bearing}):
+		    x :@= double_lop@(host_line)
+		    y :@= double_lop@(host_line)
+		    bearing :@= double_lop@(host_line) * pi / 180.0
+		    navigate.x := x
+		    navigate.y := y
+		    navigate.bearing := bearing
+		    call d@(form@("Br:position x=%d% y=%d% bearing=%d%\n\") %
+		      f@(x) % f@(y) / f@(bearing))
+		    call update@(navigate, position@Update_Reason, "position")
+		else_if partial_match@(command, "neighbor") >= 2
+		    # neighbor orig_id targ_id tangle tbearing tdist goodness
+		    origin_id :@= unsigned_lop@(host_line)
+		    target_id :@= unsigned_lop@(host_line)
+		    target_angle :@= double_lop@(host_line) * pi / 180.0
+		    target_bearing :@= double_lop@(host_line) * pi / 180.0
+		    target_distance :@= double_lop@(host_line)
+		    goodness_metric :@= double_lop@(host_line)
+
+		    # Lookup the {origin} and {target} {Tag}'s:
+		    origin :@= tag_lookup@(map, origin_id, "host_read N1")
+		    target :@= tag_lookup@(map, target_id, "host_read N2")
+
+		    # Create {neighbor} that connects {origin} to {target}:
+		    assert !neighbor_exists@(origin, target)
+		    neighbor :@= create@Tag_Neighbor(origin, target,
+		      target_angle, target_bearing, target_distance,
+		      goodness_metric, 0xffffff00)
+		else_if partial_match@(command, "segment") >= 2
+		    # segment way1_tag_id way1_id way2_tag_id way2_id:
+		    call segment_create_parse@(map, host_line, 0xffffff00)
+		    globals.map_is_ready := 0f
+		    #call d@(form@(
+		    #  "Br:segment t1=%d% w1=%d% t2=%d% w2=%d%\n\") %
+		    #  f@(map.segment_way1_tag_id) %
+		    #  f@(map.segment_way1_id) %
+		    #  f@(map.segment_way2_tag_id) /
+		    #  f@(map.segment_way2_id))
+		else_if partial_match@(command, "show") >= 2
+		    # show:
+		    call show@(map)
+		    call d@("\n\")
+		else_if partial_match@(command, "synch") >= 2
+		    # Camera synch:
+		    value :@= unsigned_lop@(host_line)
+		    call d@(form@("Br:Got synch %d%\n\") / f@(value))
+		    call coprocessor_location_set@(globals,
+		      navigate.ceiling_x, navigate.ceiling_y,
+		      navigate.ceiling_bearing, 0f, "Y:synch")
+		    call coprocessor_level_set@(globals,
+		      camera@Navigate_Level, "synch cmd")
+		else_if partial_match@(command, "tag") >= 3
+		    # tag {tag_id} {x} {y} {angle}
+		    tag :@= tag_create_parse@(map, host_line)
+		    globals.map_is_ready := 0f
+		    #call d@(form@(
+		    #  "Br:tag id=%d% x=%2f% y=%2f% angle=%2f%\n\") %
+		    #  f@(tag.id) % f@(tag.x) % f@(tag.y) /
+		    #  f@(tag.angle * 180.0 / pi))
+		else_if partial_match@(command, "target") >= 3
+		    # target x y direction
+		    #    Set target destination to (x, y):
+		    target_x :@= double_lop@(host_line)
+		    target_y :@= double_lop@(host_line)
+		    direction :@= unsigned_lop@(host_line) != 0
+		    navigate.target_direction := direction
+		    navigate.target_x := target_x
+		    navigate.target_y := target_y
+		    navigate.target_way := null@Way
+		    #call d@(form@("Br:target %2f% %2f%\n\") %
+		    #  f@(target_x) / f@(target_y))
+		    call update@(navigate, target@Update_Reason, "target")
+		else_if partial_match@(command, "way") >= 1
+		    # way way_tag_id way_id dx dy angle
+		    way :@= way_create_parse@(map, host_line)
+		    globals.map_is_ready := 0f
+		    #call d@(form@(
+		    #  "Br:way t=%d% w=%d% dx=%2f% dy=%2f% a=%2f% nm=%v%\n\") %
+		    #  f@(way.tag.id) % f@(way.id) % f@(way.dx) % f@(way.dy) %
+		    #  f@(way.tag.angle * 180.0 / pi) / f@(way.name))
+		else_if partial_match@(command, "zoom") >= 1
+		    # zoom x y ; Go to location (x,y)
+
+		    # Parse {zoom_x} and {zoom_y} from {host_line}:
+		    zoom_x :@= double_lop@(host_line)
+		    zoom_y :@= double_lop@(host_line)
+
+		    # Set up any tracing:
+		    zoom_trace :@= 0f
+		    zoom_trace := 1t
+		    if zoom_trace
+			call d@(form@("Br:zoom x=%2f% y=%2f%\n\") %
+			  f@(zoom_x) / f@(zoom_y))
+
+		    # Find the {tag} closest to ({zoom_x}, {zoom_y}):
+		    closest_tag :@= closest_tag@(map, zoom_x, zoom_y)
+		    if closest_tag == null@Tag
+			call d@("Br:zoom: No tag yet\n\")
+
+			# Make sure the camera is on:
+			call ceiling_camera@(navigate, 1t)
+		    else
+			navigate.target_x := zoom_x
+			navigate.target_y := zoom_y
+			navigate.target_way := null@Way
+			navigate.state := idle@State
+			call coprocessor_location_set@(globals,
+			  navigate.ceiling_x, navigate.ceiling_y,
+			  navigate.ceiling_bearing, 0f, "Z:zoom")
+			call coprocessor_constants_set@(globals)
+			call ceiling_camera@(navigate, 1t)
+			#call coprocessor_level@(navigate,
+			#  target@Navigate_Level, "zoom")
+
+			call update@(navigate, target@Update_Reason, "zoom")
+		else
+		    # Unrecognized command:
+		    do_nothing
+
+		#else_if partial_match@(command, "old_zoom") >= 7
+		#    # zoom x y ; Go to location (x,y)
+
+		#    # Parse {zoom_x} and {zoom_y} from {host_line}:
+		#    zoom_x :@= double_lop@(host_line)
+		#    zoom_y :@= double_lop@(host_line)
+
+		#    # Set up any tracing:
+		#    zoom_trace :@= 0f
+		#    zoom_trace := 1t
+		#    if zoom_trace
+		#	call d@(form@("Br:zoom x=%2f% y=%2f%\n\") %
+		#	  f@(zoom_x) / f@(zoom_y))
+
+		#    # Find the {tag} closest to ({zoom_x}, {zoom_y}):
+		#    closest_tag :@= closest_tag@(map, zoom_x, zoom_y)
+		#    if closest_tag == null@Tag
+		#	call d@("Br:zoom: No closest tag\n\")
+		#    else
+		#	# We have {closest_tag}, now we need to create
+		#	# and fill in {zoom_way}:
+
+		#	# Disconnect any previously connected {zoom_way}:
+		#	zoom_way :@= navigate.zoom_way
+		#	if zoom_way !== null@Way
+		#	    # Disconnect previous value of {zoom_way}:
+		#	    zoom_way_segments :@= zoom_way.segments
+		#	    assert zoom_way_segments.size = 1
+		#	    call segment_break@(zoom_way_segments[0], zoom_way)
+		#	    call way_delete@(zoom_way.tag, zoom_way)
+		#	    zoom_way := null@Way
+		#	    navigate.zoom_way := zoom_way
+
+		#	    if zoom_trace
+		#		call d@("Br:zoom Map after zoom disconnect\n\")
+		#		call d@(form@("Br:zoom map.ways.size=%d%\n\") /
+		#		  f@(map.ways.size))
+		#		call show@(map)
+
+		#	# Find closest way to ({zoom_x}
+		#	map_way :@= closest_way@(closest_tag, zoom_x, zoom_y)
+		#	if map_way !== null@Way
+		#	    zoom_counter :@= navigate.zoom_counter
+		#	    navigate.zoom_counter := zoom_counter - 1
+		#	    zoom_way := way_lookup@(map,
+		#	      closest_tag, zoom_counter, "zoom")
+		#	    call segment_join@(map_way, zoom_way)
+		#	    navigate.zoom_way := zoom_way
+
+		#	    # Load up {zoom_way}:
+		#	    zoom_way_tag :@= zoom_way.tag
+		#	    angle :@= 0.0
+		#	    dy :@= zoom_y - zoom_way_tag.y
+		#	    dx :@= zoom_x - zoom_way_tag.x
+		#	    name :@= "ZOOM"
+		#	    call update@(zoom_way, dx, dy, angle, name,
+		#	      zoom_way.height, zoom_way.open_width,
+		#	      zoom_way.close_width, zoom_way.flags)
+
+		#	# Now join {map_way} to {zoom_way} for the final
+		#	# leg of the journey:
+		#	call segment_join@(map_way, zoom_way)
+
+		#	call d@("Map after connect\n\")
+		#	call show@(map)
+
+		#	#call d@(form@(
+		#	#  "zoom_way: t=%d% w=%d% dx=%2f% dy=%2f% nm=%v%\n\") %
+		#	#  f@(zoom_way.tag.id) % f@(zoom_way.id) %
+		#	#  f@(zoom_way.dx) % f@(zoom_way.dy) /
+		#	#  f@(zoom_way.name))
+
+		#	# Let {navigate} know that it is time to start working:
+		#	navigate.destination := zoom_way
+		#	call update@(navigate, goto@Update_Reason, "zoom")
+
+		# Dispose of any left over characters in {host_line}:
+		call trim@(host_line, 0)
+	    else
+		# Buffer {character} onto {host_line}:
+		call character_append@(host_line, character)
+	    index := index + 1
+
+
+routine neighbor_updated@Easy_C
+    takes neighbor Tag_Neighbor
+    returns_nothing
+
+    # This routine is called whenever {tag} is changed.
+
+    globals :@= one_and_only@Globals()
+    host :@= globals.host
+    extractor :@= globals.extractor
+    pi :@= extractor.pi
+    call write@(host, form@("@N %d% %d% %2f% %2f% %2f% %d%\n\") %
+      f@(neighbor.origin.id) % f@(neighbor.target.id) %
+      f@(neighbor.target_twist * 180.0 / pi) %
+      f@(neighbor.target_angle * 180.0 / pi) %
+      f@(neighbor.target_distance) / f@(neighbor.goodness_metric))
+    call d@(form@("B:B2H:@N %d% %d% %2f% %2f% %2f% %d%\n\") %
+      f@(neighbor.origin.id) % f@(neighbor.target.id) %
+      f@(neighbor.target_twist * 180.0 / pi) %
+      f@(neighbor.target_angle * 180.0 / pi) %
+      f@(neighbor.target_distance) / f@(neighbor.goodness_metric))
+
+
+routine tag_updated@Easy_C
+    takes tag Tag
+    takes from String
+    returns_nothing
+
+    # This routine is called whenever {tag} is changed.
+
+    globals :@= one_and_only@Globals()
+    host :@= globals.host
+    extractor :@= globals.extractor
+    pi :@= extractor.pi
+
+    # Do not propagate bad information:
+    if tag.bearing > 100000.0 || tag.x > 100000.0 || tag.y > 100000.0
+	call d@(form@("tag_updated@(%d%, %v%)\n\") % f@(tag.id) / f@(from))
+	call d@("Br:******************************************************\n\")
+    else
+	# Seems good, let people know:
+	call write@(host, form@("@T %d% %2f% %2f% %2f% %4f%\n\") %
+	  f@(tag.id) % f@(tag.x) % f@(tag.y) % f@(tag.bearing * 180.0 / pi) /
+	  f@(tag.edge_length))
+	call d@(form@("B:B2H:@T %d% %2f% %2f% %2f% %4f%\n\") %
+          f@(tag.id) % f@(tag.x) % f@(tag.y) % f@(tag.bearing * 180.0 / pi) /
+	  f@(tag.edge_length))
+
+
+routine timeout_routine@Easy_C
+    takes dispatcher Unix_Dispatcher[Globals]
+    returns_nothing
+
+    # This routine is called when there is a timeout:
+
+    globals :@= dispatcher.globals
+    navigate :@= globals.navigate
+    call update@(navigate, timeout@Update_Reason, "timeout rtn")
+
+
+# {Globals} routines:
+
+routine coprocessor_command@Globals
+    takes globals Globals
+    takes command String
+    takes retries Unsigned
+    takes from String
+    returns_nothing
+
+    # This routine will enqueue {command} to {globals} for being sent down
+    # to the coprocessor.  {command} should not be terminated with either
+    # a carriage-return or new-line character.  {retries} specifies how
+    # many times the command will be retried before failing.
+
+    # Before everything, make a copy of {command}:
+    command_copy :@= globals.command_copy
+    call trim@(command_copy, 0)
+    call string_append@(command_copy, command)
+    command := command_copy
+
+    # Now we can safely use {form@String}():
+    trace :@= 1t
+    if trace
+	call d@(form@("=>coprocessor_command@(*, %v%, %d%, %v%)\n\") %
+          f@(command) % f@(retries) / f@(from))
+
+    # Allocate {command_result}:
+    command_results_available :@= globals.command_results_available
+    command_result :@= null@Command_Result
+    if command_results_available.size = 0
+	command_result := new@Command_Result()
+	command_result.command := new@String()
+	command_result.result := new@String()
+    else
+	command_result := pop@(command_results_available)
+	call trim@(command_result.command, 0)
+	call trim@(command_result.result, 0)
+
+    # Fill in {command_result}:
+    call string_append@(command_result.command, command)
+    command_result.retries := retries
+
+    # If {command_results_pending} is empty send {command}:
+    command_results_pending :@= globals.command_results_pending
+    if command_results_pending.size = 0
+	call coprocessor_write@(globals, command, "start")
+
+    # Append {command_result} to {command_results_pending}:
+    call append@(command_results_pending, command_result)
+
+
+    time :@= get_time_of_day@Unix()
+    call write@(globals.host, form@("@B %d% %v%\n\") %
+      f@(time - globals.start_time) / f@(command))
+
+    if trace
+	call d@(form@("<=coprocessor_command@(*, %v%, %d%, %v%)\n\") %
+          f@(command) % f@(retries) / f@(from))
+
+
+routine coprocessor_constants_set@Globals
+    takes globals Globals
+    returns_nothing
+
+    # This routine will send some constants down to the coprocessor connected
+    # to {globals}.  {bearing_limit} specifies the maximum bearing error
+    # (in degrees) for which forward motion is allowed.  {target_limit}
+    # specifies how close the target is required.  {motor_limit} specifies
+    # the maximum motor speed (127 is maximum.)  {motor_stall} speicifies
+    # the motor speed at which the motor is stalled.  {motor_ramp} specifies
+    # how fast the motor speed is changed.
+
+    # Extract some values from {globals}:
+    constants :@= globals.constants
+    pi :@= globals.extractor.pi
+
+    # Extract some values from {constants}:
+    bearing_limit :@= constants.bearing_limit * 180.0 / pi
+    speed_limit :@= constants.speed_limit
+    stall :@= constants.stall
+    target_limit :@= constants.target_limit
+    twist_limit :@= constants.twist_limit
+    ramp :@= constants.ramp
+
+    # Sent the constants down to the coprocessor:
+    call coprocessor_command@(globals, form@("b %y% %y% %y% %y% %y% %y%") %
+      f@(unsigned@(bearing_limit + 0.5)) % f@(unsigned@(target_limit * 10.0)) %
+      f@(speed_limit) % f@(twist_limit) % f@(stall) / f@(ramp), 1, "const_set")
+    call d@(form@("B:B2C:b %y% %y% %y% %y% %y% %y%\n\") %
+      f@(unsigned@(bearing_limit + 0.5)) % f@(unsigned@(target_limit * 10.0)) %
+      f@(speed_limit) % f@(twist_limit) % f@(stall) / f@(ramp))
+
+    call coprocessor_pid_set@(globals, 0)
+    #call coprocessor_pid_set@(globals, 1)
+
+    
+routine coprocessor_laser_set@Globals
+    takes globals Globals
+    takes laser Logical
+    returns_nothing
+
+    # This routine will send a command down to the coprocess attached to
+    # {globals} to turn the laser on (if {laser} is {true@Lofical}) or
+    # off (if {laser} is {false@Logical}.)
+
+    # For not disable all laser commands:
+    #call coprocessor_command@(globals,
+    #  form@("g %d%") / f@(laser), 1, "laser_set")
+
+
+routine coprocessor_level_set@Globals
+    takes globals Globals
+    takes level Navigate_Level
+    takes why String
+    returns_nothing
+
+    enable :@= 0
+    switch level
+      all_cases_required
+      case off
+	enable := 0
+      case camera
+	enable := 0x10
+      case turn
+	enable := 0x20
+      case move
+	enable := 0x30
+
+    call coprocessor_command@(globals,
+      form@("e %y%") / f@(enable), 1, why)
+
+
+routine coprocessor_lift_grip@Globals
+    takes globals Globals
+    takes enable Logical
+    takes lift_height_before Unsigned
+    takes lift_height_after Unsigned
+    takes grip_left_position Unsigned
+    takes grip_right_position Unsigned
+    takes grip_left_limit Unsigned
+    takes grip_right_limit Unsigned
+    returns_nothing
+
+    # This routine will send a command to the coprocessor attached to {globals}
+    # that sets up the grip and lift for the next robot movement.  {enbable}
+    # specifies whether or not any lift/grip opration happens at all.
+    # {lift_height_before} and {lift_height_after} specify the two
+    # lift heights.  {grip_left_position} and {grip_right_position} specify
+    # the two desired gripper tine positions.  {grip_left_limit} and
+    # {grip_right_limit} specify the two gripper force limits.
+
+    # {enable_value}=0 means no grip/lift movement; 2 means grip/lift allowed:
+    enable_value :@= 0
+    if enable
+	enable_value := 2
+
+    call coprocessor_command@(globals,
+      form@("r %y% %y% 1 %y% %y% %y% %y% %d%") %
+      f@(lift_height_before) % f@(lift_height_after) %
+      f@(grip_left_position) % f@(grip_right_position) %
+      f@(grip_left_limit) % f@(grip_right_limit) /
+      f@(enable_value), 1, "lift_grip")
+
+    time :@= get_time_of_day@Unix()
+
+    call write@(globals.host,
+      form@("@R %d%  %d% %d%  %d% %d%  %d% %d%  %d%\n\") %
+      f@(time - globals.start_time) %
+      f@(lift_height_before) % f@(lift_height_after) %
+      f@(grip_left_position) % f@(grip_right_position) %
+      f@(grip_left_limit) % f@(grip_right_limit) /
+      f@(enable_value))
+
+
+routine coprocessor_location_get@Globals
+    takes globals Globals
+    returns_nothing
+
+    # This routine will send a command to the coprocessor attached to {globals}
+    # that will cause it to report its current location.
+
+    # Put a space on the end of the command so that the echo supressor in
+    # {coprocessor_read@Easy_C}() throws the echo away:
+    call coprocessor_command@(globals, "l ", 1, "location_get")
+    
+
+routine coprocessor_location_set@Globals
+    takes globals Globals
+    takes x Double
+    takes y Double
+    takes bearing Double
+    takes optional Logical
+    takes from String
+    returns_nothing
+
+    # This routine will send a command down to the coprocessor connected to
+    # {globals} to set the robot location to ({x},{y}) with {bearing} measured
+    # in radians.  {optional} means that the underlying software is allowed
+    # to ignore the position.
+
+    # {pi} is used to convert between radians and degrees:
+    pi :@= globals.extractor.pi
+
+    # Send the position set command down:
+    call coprocessor_command@(globals, form@("p %y% %y% %y% %d% %d%") %
+      f@(integer@(x * 10.0)) % f@(integer@(y * 10.0)) %
+      f@(integer@(bearing * 180.0 / pi)) % f@(optional) /
+      f@(unsigned@(from[0])), 1, from)
+
+
+routine coprocessor_pid_set@Globals
+    takes globals Globals
+    takes motor Unsigned
+    returns_nothing
+
+    # This routine will set the PID constants for {motor} 
+    # to {globals}.
+
+    constants :@= globals.constants
+    p :@= 0.0
+    i :@= 0.0
+    d :@= 0.0
+    switch motor
+      case 0
+	p := constants.pid_p
+	i := constants.pid_i
+	d := constants.pid_d
+      case 1
+	p := constants.grip_p
+	i := constants.grip_i
+	d := constants.grip_d
+    linear :@= constants.linear
+
+    call d@(form@("B:B2C: p=%2f% i=%2f% d=%2f%\n\") % f@(p) % f@(i) / f@(d))
+
+    call coprocessor_command@(globals, form@("k %y% %y% %y% %y% %d%") %
+      f@(unsigned@(p * 100.0 + 0.5)) %
+      f@(unsigned@(i * 100.0 + 0.5)) %
+      f@(unsigned@(d * 100.0 + 0.5)) %
+      f@(unsigned@(linear * 100.0 + 0.5)) /
+      f@(motor), 1, "pid_set")
+
+    call d@(form@("B:B2C:k %y% %y% %y% %y% %d%\n\") %
+      f@(unsigned@(p * 100.0 + 0.5)) %
+      f@(unsigned@(i * 100.0 + 0.5)) %
+      f@(unsigned@(d * 100.0 + 0.5)) %
+      f@(unsigned@(linear * 100.0 + 0.5)) /
+      f@(motor))
+
+
+routine coprocessor_target_set@Globals
+    takes globals Globals
+    takes target_x Double
+    takes target_y Double
+    takes direction Logical
+    takes current_way Way
+    takes target_way Way
+    takes from String
+    returns_nothing
+
+    # This routine will set the navigation target for coprocessor attached
+    # to {globals} to ({target_x}, {target_y}) with a robot direction of
+    # {direction}.
+
+    call coprocessor_command@(globals, form@("t %y% %y% %d%") %
+      f@(integer@(target_x * 10.00)) % f@(integer@(target_y * 10.00)) /
+      f@(direction), 1, "target_set")
+    globals.navigate.direction := direction
+
+    time :@= get_time_of_day@Unix()
+    call write@(globals.host, form@("@D %d% %2f% %2f% %d% %v% %v% %v%\n\") %
+      f@(time - globals.start_time) %
+      f@(target_x) % f@(target_y) % f@(direction) %
+      f@(current_way) % f@(target_way) / f@(from))
+
+
+
+routine coprocessor_write@Globals
+    takes globals Globals
+    takes text String
+    takes from String
+    returns_nothing
+
+    # This routine will write {text} to {globals.coprocessor}.
+
+    # Before we do anything, make a copy of {text}:
+    text_copy :@= globals.text
+    call trim@(text_copy, 0)
+    call string_append@(text_copy, text)
+    text := text_copy
+
+    # Set {debug} to 1t to enable debugging:
+    debug :@= 1t
+    debug := 0f
+    if debug
+	call d@(form@("=>coprocessor_write@(*, %v%, %v%)\n\") %
+	  f@(text) / f@(from))
+
+    # Extract some values from {coprocessor}:
+    coprocessor :@= globals.coprocessor
+    coprocessor_debug_buffer :@= globals.coprocessor_debug_buffer
+    coprocessor_out_buffer :@= globals.coprocessor_out_buffer
+    coprocessor_shifted :@= globals.coprocessor_shifted
+
+    # Collect shifted values in {coprocessor_out_buffer} and unshifted values
+    # in {coprocessor_buffer}:
+    call trim@(coprocessor_debug_buffer, 0)
+    call trim@(coprocessor_out_buffer, 0)
+
+    # Iterate across {text} and build up {coprocessor_out_buffer} and
+    # {coprocessor_debug_buffer}:
+    size :@= text.size
+    index :@= 0
+    while index < size
+	# Grab {character} and make darn sure the 8th bit is not set:
+	character :@= text[index] & '\127\'
+
+	# New-line characters are not allowed in {text}:
+	if character = '\n\'
+	    # Print a warning message:
+	    call d@(form@("coprocessor_write: CR in command string %v%\n\") /
+	      f@(text))
+	else
+	    # Append to {coprocessor_debug_buffer} and {coprocessor_out_buffer}:
+	    call character_append@(coprocessor_debug_buffer, character)
+	    if coprocessor_shifted
+		character := character | '\128\'
+	    call character_append@(coprocessor_out_buffer, character)
+
+	index := index + 1
+
+    # Tack a carriage return onto the end of the command:
+    carriage_return :@= '\cr\'
+    call character_append@(coprocessor_debug_buffer, carriage_return)
+    if coprocessor_shifted
+	carriage_return := carriage_return | '\128\'
+    call character_append@(coprocessor_out_buffer, carriage_return)
+
+    # Send {coprocesor_out} to the coprocessor:
+    call write@(coprocessor, coprocessor_out_buffer)
+
+    if debug
+	call d@(form@("<=coprocessor_write:(%v%, %v%) => %v%\n\") %
+	  f@(text) % f@(from) / f@(coprocessor_debug_buffer))
+
+
+routine one_and_only@Globals
+    takes_nothing
+    returns Globals
+
+    # This routine will return the one and only {Globals} object.
+
+    return null@Globals
+
+
+routine path_log@Globals
+    takes globals Globals
+    takes path Array[Way]
+    takes label String
+    returns_nothing
+
+    # This routine will send a log message that contains {path} up
+    # to the host via {globals}.
+
+    size :@= path.size
+    time :@= get_time_of_day@Unix()
+    host :@= globals.host
+    call write@(host, form@("@P %d% %v% %d%") %
+      f@(time - globals.start_time) % f@(label) / f@(size))
+    index :@= 0
+    while index < size
+	call write@(host, form@(" %v%") / f@(path[index]))
+	index := index + 1
+    call write@(host, "\n\")
+
+# {Grip_Mode} routines:
+
+routine f@Grip_Mope
+    takes grip_mode Grip_Mode
+    returns String
+
+    # This routine will format {grip_mode} and return it as {String}.
+
+
+    # Figure out which reprentation if requested:
+    decimal_mode :@= 0f
+    string_mode :@= 0f
+    value :@= field_next@Format()
+    assert value.size = 0
+    flag :@= value[0]
+    switch flag
+      case 'd'
+	decimal_mode := 1t
+      case 's'
+	string_mode := 1t
+      default
+	assert 0f
+    call trim@(value, 0)
+
+    # Figure out the requested representation:
+    decimal :@= null@String
+    string :@= null@String
+    switch grip_mode
+      all_cases_required
+      case off
+	string := "off"
+	decimal := "0"
+      case open
+	string := "open"
+	decimal := "1"
+      case close
+	string := "close"
+	decimal := "2"
+
+    # Load requested representation into {value}:
+    if decimal_mode
+	call string_append@(value, decimal)
+    else_if string_mode
+	call string_append@(value, string)
+    else
+	assert 0f
+
+    return value
+
+# {Integer} routines:
+
+routine absolute@Integer
+    takes value Integer
+    returns Integer
+
+    # This routine will return the absolute value of {value}.
+
+    if value < 0i
+	value := -value
+    return value
+
+
+# {Lift_Grip_Mode} routines:
+
+routine f@Lift_Grip_Mode
+    takes lift_grip_mode Lift_Grip_Mode
+    returns String
+
+    # This routine will format {lift_grip_mode} and return it as {String}.
+
+
+    # Figure out which reprentation if requested:
+    decimal_mode :@= 0f
+    string_mode :@= 0f
+    value :@= field_next@Format()
+    assert value.size = 0
+    flag :@= value[0]
+    switch flag
+      case 'd'
+	decimal_mode := 1t
+      case 's'
+	string_mode := 1t
+      default
+	assert 0f
+    call trim@(value, 0)
+
+    # Figure out the requested representation:
+    decimal :@= null@String
+    string :@= null@String
+    switch lift_grip_mode
+      all_cases_required
+      case off
+	string := "off"
+	decimal := "0"
+      case before
+	string := "before"
+	decimal := "1"
+      case grip
+	string := "grip"
+	decimal := "2"
+      case after
+	string := "after"
+	decimal := "3"
+
+    # Load requested representation into {value}:
+    if decimal_mode
+	call string_append@(value, decimal)
+    else_if string_mode
+	call string_append@(value, string)
+    else
+	assert 0f
+
+    return value
+
+# {Navigate} routines:
+
+routine ceiling_camera@Navigate
+    takes navigate Navigate
+    takes on Logical
+    returns_nothing
+
+    # The routine will turn the ceiling camera on and off depnding upon {on}.
+
+    globals :@= navigate.globals
+    ceiling :@= globals.ceiling
+    if on && !navigate.ceiling_camera_on
+	# Get the laser off:
+	if globals.laser_on
+	    call coprocessor_laser_set@(globals, 0f)
+	    globals.laser_on := 0f
+
+	# Turn the ceiling camera on:
+	call write@(ceiling, "level 1\n\")
+	#call write@(ceiling, "level 2\n\")
+	navigate.ceiling_camera_on := 1t
+	call d@("Br:*******************Ceiling_camera ON\n\")
+    else_if !on && navigate.ceiling_camera_on
+	# Get the ceiling camera off:
+	call write@(ceiling, "level 0\n\")
+	call d@("Br:*******************Ceiling_camera off\n\")
+	navigate.ceiling_camera_on := 0f
+
+	# Get the laser on:
+	if !globals.laser_on
+	    call coprocessor_laser_set@(globals, 1t)
+	    globals.laser_on := 1t
+
+
+routine create@Navigate
+    takes globals Globals
+    returns Navigate
+
+    # This routine returns a new {Navigate} object containing {globals}.
+
+    navigate :@= new@Navigate()
+    navigate.bearing_count := 0
+    navigate.bearing := 0.0
+    navigate.camera_count := 0
+    navigate.ceiling_camera_on := 0f
+    navigate.ceiling_bearing := 0.0
+    navigate.ceiling_x := 0.0
+    navigate.ceiling_y := 0.0
+    navigate.current := null@Way
+    navigate.destination := null@Way
+    navigate.destination_name := new@String()
+    navigate.enable := 0
+    navigate.enable_mode := 0
+    navigate.enable_label := 0
+    navigate.enable_why := null@String
+    navigate.globals := globals
+    navigate.grip_left_force := 0xffffffff
+    navigate.grip_left_limit := 0
+    navigate.grip_left_position := 0
+    navigate.grip_right_force := 0xffffffff
+    navigate.grip_right_limit := 0
+    navigate.grip_right_position := 0
+    navigate.label := -1i
+    navigate.level := off@Navigate_Level
+    navigate.lifter_position := 0
+    navigate.motor_settings_set := 0f
+    navigate.motor_speed := 0i
+    navigate.motor_twist := 0i
+    navigate.next := null@Way
+    navigate.state := idle@State
+    navigate.target_bearing := 0.0
+    navigate.target_direction := 0f
+    navigate.target_distance := 0.0
+    navigate.target_name := ""
+    navigate.target_way := null@Way
+    navigate.target_x := 0.0
+    navigate.target_y := 0.0
+    navigate.temporary := new@String()
+    navigate.x := 0.0
+    navigate.y := 0.0
+    navigate.visit := null@Visit
+    navigate.visits := new@Array[Visit]()
+    navigate.zoom_counter := 999999
+    navigate.zoom_way := null@Way
+    return navigate
+
+
+routine coprocessor_level@Navigate
+    takes navigate Navigate
+    takes level Navigate_Level
+    takes why String
+    returns_nothing
+
+    # This routine will set the coprocessor control level to {level}
+    # using {navigate}.
+
+    globals :@= navigate.globals
+
+    # Set the motor constraints:
+    count :@= 0
+    if !navigate.motor_settings_set
+	navigate.motor_settings_set := 1t
+	call coprocessor_constants_set@(globals)
+	count := count + 1
+
+    # Set the actual enable level:
+    if navigate.level != level
+	navigate.level := level
+	call coprocessor_level_set@(globals, level, why)
+	count := count + 1
+
+	navigate.enable_why := why
+	#call write@(globals.host, form@("new level=%d% (%s%)\n\") %
+	#  f@(level) / f@(why))
+
+
+routine current_is_close@Navigate
+    takes navigate Navigate
+    returns Logical
+
+    # This routine will return {true@Logical} if the current robot position
+    # (measured via the ceiling) is close to the current {Way} and the
+    # gripper is not moving:
+
+    # Compute distance from ceiling (x,y) to {current}:
+    constants :@= navigate.globals.constants
+    current :@= navigate.current
+    current_tag :@= current.tag
+    current_x :@= current_tag.x + current.dx
+    current_y :@= current_tag.y + current.dy
+    dx :@= current_x - navigate.ceiling_x
+    dy :@= current_y - navigate.ceiling_y
+    current_distance :@= square_root@(dx * dx + dy * dy)
+    is_close :@= current_distance < constants.target_limit + 0.5
+
+    enable_mode :@= navigate.enable_mode
+    gripper_stopped :@= enable_mode = 0 || enable_mode = 5
+
+    return is_close && gripper_stopped
+
+
+routine grip_limits_set@Navigate
+    takes navigate Navigate
+    returns_nothing
+
+    # This routine will update the {navigate} limit settings.
+
+    constants :@= navigate.globals.constants
+    grip_left_force :@= navigate.grip_left_force
+    grip_right_force :@= navigate.grip_right_force
+    if grip_left_force != 0xffffffff
+	#navigate.grip_left_limit :=
+	#  grip_left_force + constants.left_force_increment
+	navigate.grip_left_limit := constants.left_force_increment
+    if grip_right_force != 0xffffffff
+	#navigate.grip_right_limit :=
+	#  grip_right_force + constants.right_force_increment
+	navigate.grip_right_limit := constants.right_force_increment
+
+
+routine shutdown@Navigate
+    takes navigate Navigate
+    returns_nothing
+
+    # This routine will cause {navigate} to enter a shutdown state:
+
+    # Shut down the coprocessor:
+    call coprocessor_level@(navigate, camera@Navigate_Level, "shutdown")
+
+    # Turn off the camera:
+    call ceiling_camera@(navigate, 0f)
+
+    # Forget that we sent the motor settings:
+    navigate.motor_settings_set := 0f
+
+    # Get into the idle state:
+    navigate.state := idle@State
+
+    navigate.visit := null@Visit
+
+
+routine update@Navigate
+    takes navigate Navigate
+    takes reason Update_Reason
+    takes debug_label String
+    returns_nothing
+
+    # This routine is called each time there is something new to do:
+
+    state :@= navigate.state
+    globals :@= navigate.globals
+    level :@= navigate.level
+
+    indent :@= 0
+    trace :@= indent < 0xffff0000
+    if trace    
+	call d@(form@("%p%=>update@navigate(*, %r%, %v%): %s%\n\") %
+	  f@(indent) % f@(reason) % f@(debug_label) / f@(state))
+    indent1 :@= indent + 1
+
+    # We do no care what state we are in, if we get an update from the
+    # host, process it immediately:
+    switch reason
+      all_cases_required
+      case halt
+	# Halting is easy:
+	call shutdown@(navigate)
+
+      case coprocessor_error
+	# Coprocessor had an error:
+	call write@(globals.host, "Coprocessor command error\n\")
+	call shutdown@(navigate)
+
+      case goto
+	# We have a new destination:
+	destination :@= navigate.destination
+	if destination == null@Way
+	    # No marker:
+	    host :@= globals.host
+	    call write@(host, "Could not find destination\n\")
+
+	    # We shut everything down:
+	    call shutdown@(navigate)
+	else
+	    # Found it; turn ceiling camera on
+	    navigate.state := plan@State
+	    call ceiling_camera@(navigate, 1t)
+
+      case location
+	call coprocessor_location_get@(globals)
+
+      case position
+	# We need to set the current position:
+	call coprocessor_location_set@(globals,
+	  navigate.x, navigate.y, navigate.bearing, 0f,
+	  "P:update: case pos")
+
+      case target
+	# We have a new target:
+        #call ceiling_camera@(navigate, 0f)
+
+	# While we are at it, let's load {target_x} and {target_y}
+	call coprocessor_target_set@(globals,
+	  navigate.target_x, navigate.target_y,
+	  navigate.target_direction, null@Way, null@Way, "update: target")
+
+	call coprocessor_location_set@(globals,
+	  navigate.x, navigate.y, navigate.bearing, 0f, "T:update case target")
+
+	call coprocessor_level@(navigate, turn@Navigate_Level, "new_target")
+
+	# Force a location command out of coprocessor:
+	call coprocessor_location_get@(globals)
+
+	# Now we wait for the turn to complete:
+	navigate.state := turn@State
+
+      case ceiling, coprocessor_done, coprocessor_location, timeout
+	# All other commands
+	switch state
+	  all_cases_required
+	  case idle
+	    switch reason
+	      case timeout
+		#call d@("timeout in idle\n\")
+	      default
+		#call d@(form@("Update %r% in state idle\n\") / f@(reason))
+	  case plan
+	    switch reason
+	      case ceiling
+		# We should have a new ceiling camera way point:
+		if navigate.current == null@Way
+		    call d@("no current way to plan with\n\")
+		    call shutdown@(navigate)
+		else
+		    # Figure out which {Way} to visit {next}:
+		    next :@= path_plan@(navigate, indent1)
+
+		    # Shut everything down:
+		    navigate.next := next
+		    if next == null@Way
+			call shutdown@(navigate)
+		    else
+			# We need to go to {next}:
+			current :@= navigate.current
+			visit :@= navigate.visit
+			next_tag :@= next.tag
+			target_x :@= next_tag.x + next.dx
+			target_y :@= next_tag.y + next.dy
+			target_direction :@= is_backup@(navigate.current)
+			target_way :@= next
+			navigate.target_name := next.name
+			navigate.target_x := target_x
+			navigate.target_y := target_y
+			navigate.target_way := target_way
+			navigate.target_direction := target_direction
+
+			temporary :@= navigate.temporary
+			call trim@(temporary, 0)
+			path :@= navigate.globals.extractor.map.path
+			path_index :@= 0
+			while path_index < path.size
+			    call string_append@(temporary,
+			      form@(" %s%") / f@(path[path_index].name))
+			    path_index := path_index + 1
+
+			#call write@(globals.host, form@(
+			#    "Goto %d%:%d% (%v%) at (%2f%, %2f%) [%s%]\n\") %
+			#    f@(next_tag.id) % f@(next.id) % f@(next.name) %
+			#    f@(target_x) % f@(target_y) / f@(temporary))
+
+			# Deal with gripper
+			if next == visit.way
+			    # We are at a {Way} that needs gripper action:
+			    call lift_grip@(navigate)
+			else
+			    # Disable the lift and gripper:
+			    call coprocessor_lift_grip@(globals, 0f,
+			      0x200, 0x200, 0x200, 0x180, 0, 0)
+
+			# Let's load {target_x} and {target_y}:
+			call coprocessor_target_set@(globals,
+			  target_x, target_y, target_direction, current,
+			  target_way, "update: plan")
+
+			# Use ceiling information to set location:
+			call coprocessor_location_set@(globals,
+			  navigate.ceiling_x, navigate.ceiling_y,
+			  navigate.ceiling_bearing, 0f,
+			  "L:update: case plan")
+
+			# Enable turning:
+			call coprocessor_level@(navigate,
+			  turn@Navigate_Level, "turn_allow")
+
+			# Now we wait for the turn to complete:
+			navigate.state := turn@State
+
+	      default
+		call d@(form@("Update %r% in plan state\n\") / f@(reason))
+	  case turn
+	    switch reason
+	      case timeout
+		# Timeout happened:
+		call coprocessor_location_get@(globals)
+
+	      case coprocessor_location
+		# The coprocessor has given us a location:
+		call turn_and_move@(navigate)
+
+	      case ceiling
+		# Pull information out of {current}:
+
+		optional :@= navigate.target_distance > 10.0 &&
+		  navigate.motor_speed != 0i
+		optional := 0f
+		call coprocessor_location_set@(globals,
+		  navigate.ceiling_x, navigate.ceiling_y,
+		  navigate.ceiling_bearing, optional,
+		  "C:update: case ceiling")
+
+		call turn_and_move@(navigate)
+
+	      default
+		call d@(form@("Received %r% in turn state\n\") / f@(reason))
+ 
+	  case move
+	    assert 0f
+
+    if state != navigate.state || level != navigate.level
+	time :@= get_time_of_day@Unix()
+	call write@(globals.host, form@("@S %d% %d% %s% %v%\n\") %
+	  f@(time - globals.start_time) %
+	  f@(unsigned@(navigate.state)) % f@(unsigned@(navigate.level)) /
+	  f@(navigate.enable_why))
+
+    if trace
+	call d@(form@("%p%<=update@navigate(*, %r%, %v%): %s%\n,n\") %
+	  f@(indent) % f@(reason) % f@(debug_label) / f@(state))
+
+
+routine lift_grip@Navigate
+    takes navigate Navigate
+    returns_nothing
+
+    # This routine will manage all lift, grip and release operations.
+
+    visit :@= navigate.visit
+    focus :@= visit.focus
+
+    if focus !== null@Way
+	# {focus_height} is the desired height for the {focus} way point.
+	#  Make sure that {height} stays in bounds:
+
+	focus_height :@= focus.height
+	# Lifter 0x50 = 3", 0x390 = 64":
+	if focus_height < 3.0
+	    # Go no lower than 3 inches:
+	    focus_height := 3.0
+	else_if focus_height > 64.0
+	    # Go no heigher than 64 inches:
+	    focus_height := 64.0
+
+	# {path_height} is the desired height for the way
+	# points on the path between the grab location and
+	# the release location.  Make sure that {path_height}
+	# stays in bounds:
+	path_height :@= visit.path_height
+	if path_height < 3.0
+	    # Go no lower than 3 inches:
+	    path_height := 3.0
+	else_if path_height > 64.0
+	    # Go no heigher than 64 inches:
+	    path_height := 64.0
+
+	# Compute the various lifter height values that
+	# can possibly be used below:
+	lift_span :@= double@(0x390 - 0x50) / (64.0 - 3.0)
+	path_height_upper :@= 0x50 +
+          unsigned@(lift_span * (path_height - 3.0))
+	focus_height_upper :@= 0x50 +
+	  unsigned@(lift_span * (focus_height - 3.0))
+	# The {focus_height_lower} is 1 inch lower:
+	focus_height_lower :@= 0x50 +
+	  unsigned@(lift_span * (focus_height - 3.0 - 1.0))
+
+	# Make sure that {grip_open_width} is in bounds
+	# (i.e. no wider than the gripper can grip):
+	# Left 0x200 = 0", 0x3e0 = 7"
+	# Right 0x180 = 0", 0x50 = 4":
+	grip_open_width :@= focus.open_width
+	if grip_open_width > 11.0
+	    # Go no wider than 11 inches (= 4" + 7"):
+	    grip_open_width := 11.0
+	else_if grip_open_width < 0.0
+	    grip_open_width := 0.0
+
+	# If {open_width} is 8" or less, the left and
+	# right grip amounts can be evenly distributed.
+	# Otherwise, the exceess goes to the left gripper:
+	grip_left_open_width :@= 0.0
+	grip_right_open_width :@= 0.0
+	if grip_open_width <= 8.0
+	    grip_left_open_width := grip_open_width / 2.0
+	    grip_right_open_width := grip_left_open_width
+	else
+	    grip_left_open_width := 4.0 + (grip_open_width - 8.0)
+	    grip_right_open_width := 4.0
+
+	# Compute {grip_left_closed} and {grip_right_closed}
+	# are hard coded to be the zero value:
+	grip_left_closed :@= 0x200
+	grip_right_closed :@= 0x180
+
+	# Compute the open {grip_left} and {grip_right} using
+	# linear interpolation:
+	grip_left_span :@= double@(0x390 - 0x200) / 7.0
+	grip_right_span :@= double@(0x180 - 0x50) / 4.0
+	grip_left_open :@= 0x200 +
+	  unsigned@(grip_left_span * grip_left_open_width)
+	grip_right_open :@= 0x180 -
+	  unsigned@(grip_right_span * grip_right_open_width)
+
+	# Define safe values for lift/gripper configuration:
+	lift_height_before :@= path_height_upper
+	lift_height_after :@= path_height_upper
+	grip_left_position :@= grip_left_open
+	grip_right_position :@= grip_right_open
+	grip_left_limit :@= 0
+	grip_right_limit :@= 0
+	lift_grip_enable :@= 0f
+
+	# Get left/right force increments from {globals}:
+	globals :@= navigate.globals
+	constants :@= globals.constants
+
+	# Get some grip limit values from {navigate}:
+	grip_left_limit := navigate.grip_left_limit
+	grip_right_limit := navigate.grip_right_limit
+
+	switch visit.mode
+	  all_cases_required
+	  case grab_before
+	    # Approach at {path_height_upper} with gripper open:
+	    lift_height_before := path_height_upper
+	    lift_height_after := path_height_upper
+	    grip_left_position := grip_left_open
+	    grip_right_position := grip_right_open
+	  case grab
+	    # Start at {path_height_upper} (previous mode), lower to
+	    # {focus_height_lower}, grab, and return to {focus_height_upper}:
+	    lift_height_before := focus_height_lower
+	    lift_height_after := focus_height_upper
+	    grip_left_position := grip_left_closed
+	    grip_right_position := grip_right_closed
+
+	    # We should have the grippers open by now.  So now is a good
+	    # time to update the grip limit values:
+	    call grip_limits_set@(navigate)
+	    grip_left_limit := navigate.grip_left_limit
+	    grip_right_limit := navigate.grip_right_limit
+	  case grab_after
+	    # Retreat at {path_height_upper} while gripping:
+	    lift_height_before := path_height_upper
+	    lift_height_after := path_height_upper
+	    grip_left_position := grip_left_closed
+	    grip_right_position := grip_right_closed
+	  case release_before
+	    # Approach at {lift_height_top} while gripping:
+	    lift_height_before := path_height_upper
+	    lift_height_after := path_height_upper
+	    grip_left_position := grip_left_closed
+	    grip_right_position := grip_right_closed
+	  case release
+	    # Starting at {lift_height_top} (from before),
+	    # lower to {lift_height_before}, releas, and
+	    # return to {lift_height_top}.
+	    lift_height_before := focus_height_lower
+	    lift_height_after := path_height_upper
+	    grip_left_position := grip_left_open
+	    grip_right_position := grip_right_open
+	  case release_after
+	    # Retreat at {lift_height_top} with no gripping:
+	    lift_height_before := path_height_upper
+	    lift_height_after := path_height_upper
+	    grip_left_position := grip_left_open
+	    grip_right_position := grip_right_open
+
+	# Now send the values down to coprocessor:
+	call coprocessor_lift_grip@(globals, 1t,
+	  lift_height_before, lift_height_after, grip_left_position,
+	  grip_right_position, grip_left_limit, grip_right_limit)
+
+
+routine path_plan@Navigate
+    takes navigate Navigate
+    takes indent Unsigned
+    returns Way
+
+    # This routine will figure out which {Way} to go to next using
+    # the state in {navigate}.  {null@Way} is returned if there is
+    # no next {Way} to go to:
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>path_plan@Navigate(*)\n\") / f@(indent))
+    indent1 :@= indent + 1
+
+    # In case no next way is found, return {null@Way}:
+    next :@= null@Way
+
+    # Grab some values out of {navigate}:
+    globals :@= navigate.globals
+    map :@= globals.extractor.map
+
+    # This is a kludge.  {path_find@Map}() returns the object below:
+    path :@= navigate.globals.extractor.map.path
+    call trim@(path, 0)
+
+    # {debug_flags} is used to figure out what the planner decided:
+    debug_flags :@= navigate.temporary
+    call trim@(debug_flags, 0)
+
+    # See whether or not we need to {visit} another location:
+    current :@= navigate.current
+    visit :@= visits_next@(navigate, indent1)
+    navigate.visit := visit
+    if visit == null@Visit
+	# There is no place left to visit; we are done:
+	call character_append@(debug_flags, '!')
+	next := null@Way
+    else_if current == null@Way
+	# We do not know where we are; there is no way forward:
+	call character_append@(debug_flags, '@')
+	next := null@Way
+    else
+	# We know were we are and were we want to go; plan a path:
+	destination :@= visit.way
+	navigate.destination := destination
+	path := path_find@(map, current, destination, indent1)
+
+	size :@= path.size
+	if size > 1
+	    # There are multiple {Way}'s along the {path}:
+	    call character_append@(debug_flags, 'a')
+
+	    if current_is_close@(navigate)
+		# We are close enough to {current} to goto the {next} {Way}
+		# on the {path}:
+		call character_append@(debug_flags, 'b')
+		next := path[1]
+	    else
+		# We are not close enough to {current} yet, so we keep seeking
+		# towards {current}:
+		call character_append@(debug_flags, 'c')
+		next := current
+	else
+	    call character_append@(debug_flags, 'd')
+
+	    # The path contains a single {Way}:
+	    if current_is_close@(navigate)
+		# We have arrived:
+		call character_append@(debug_flags, 'e')
+		call write@(globals.host,
+		  form@("We are at %d%:%d%\n\") %
+		  f@(current.tag.id) / f@(current.id))
+	    else
+		# We need to get closer:
+		call character_append@(debug_flags, 'f')
+		next := current
+
+    call visits_log@(navigate, "V2", indent1)
+    call path_log@(globals, path, form@("debug_flags=%s%") / f@(debug_flags))
+    navigate.next := next
+
+    if trace
+	call d@(form@("%p%<=path_plan@Navigate(*) => %w% (df=%s%)\n\") %
+	  f@(indent) % f@(next) / f@(debug_flags))
+
+    return next
+
+
+routine turn_and_move@Navigate
+    takes navigate Navigate
+    returns_nothing
+
+    # This routine will take current state of {navigate} and decide
+    # what to do with regards to turning and moving the robot.
+
+    camera_count :@= navigate.camera_count
+    bearing_count :@= navigate.bearing_count
+    level :@= off@Navigate_Level
+    why :@= "t&m:<oops>"
+    if navigate.enable_mode = 5
+	level := camera@Navigate_Level
+	why := "t&m:arrived"
+	navigate.state := plan@State
+	camera_count := 0
+	bearing_count := 0
+    else_if navigate.level = move@Navigate_Level
+	level := move@Navigate_Level
+	why := "t&m:moving"
+	camera_count := 0
+	bearing_count := 0
+    else
+	# Compute absolute {bearing_error}:
+ 	pi :@= 3.14159265358979323846
+	bearing_error :@= navigate.ceiling_bearing - navigate.target_bearing
+	if navigate.direction
+	    # We are actually going backwards:
+	    bearing_error := bearing_error - pi
+	bearing_error := angle_normalize@(bearing_error)
+
+	if absolute@(bearing_error) <= 6.0 * pi / 180.0
+	    # We seem to be basically on bearing to target:
+	    if camera_count < 4
+		level := turn@Navigate_Level
+		bearing_count := 0
+		camera_count := camera_count + 1
+		why := "t&m:count<4"
+	    else
+		# We seem to be on target 4 times in a row,
+		# Let's get moving again:
+		level := move@Navigate_Level
+		bearing_count := 0
+		camera_count := 0
+		why := "t&m:move"
+	else
+	    # We do not appear to be on target:
+	    if bearing_count > 10
+		# The camera is probably stalled, so let's just go:
+		level := move@Navigate_Level
+		bearing_count := 0
+		camera_count := 0
+		why := "t&m:be>6,bc>10"
+	    else
+		# Let's see if the robot stalls with a big
+		# bearing error, or gets on bearing:
+		level := turn@Navigate_Level
+		bearing_count := bearing_count + 1
+		camera_count := 0
+		why := "t&m:be>6"
+
+	call write@(navigate.globals.host,
+	  form@("@B \dq\Level: L:%l% W:%s% C:%d% BE:%2f%\dq,n\") %
+	  f@(level) % f@(why) % f@(camera_count) /
+	  f@(bearing_error * 180.0 / pi))
+
+    # Change the level:
+    navigate.camera_count := camera_count
+    call coprocessor_level@(navigate, level, why)
+
+
+routine visits_append@Navigate
+    takes navigate Navigate
+    takes way Way
+    takes focus Way
+    takes top_height Double
+    takes mode Visit_Mode
+    returns Visit
+
+    # This routine will append a new {Visit} mode containing {way}, {focus},
+    # {top_height}, and {mode} to the {visits} queue in {navigate}.
+    # The appended {Visit} object is returned.
+
+    visit :@= create@Visit(way, focus, top_height, mode)
+    call append@(navigate.visits, visit)
+    return visit
+
+
+routine visits_clear@Navigate
+    takes navigate Navigate
+    returns_nothing
+
+    # This routine will clear out the {visits} queue in {navigate}.
+
+    call trim@(navigate.visits, 0)
+
+
+routine visits_log@Navigate
+    takes navigate Navigate
+    takes label String
+    takes indent Unsigned
+    returns_nothing
+
+    # This routine will output an @V log record using {navigate}
+    # tagged with a label of {label}.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>visits_log@Navigate(*, %v%)\n\") %
+	  f@(indent) / f@(label))
+    indent1 :@= indent + 1
+
+    globals :@= navigate.globals
+    time :@= get_time_of_day@Unix()
+
+    temporary :@= navigate.temporary
+    call trim@(temporary, 0)
+
+    visits :@= navigate.visits
+    size :@= visits.size
+    index :@= 0
+    while index < size
+	visit :@= visits[index]
+	visit_way :@= visit.way
+	call string_append@(temporary, form@(" %v%") / f@(visit_way.name))
+	index := index + 1
+
+    host :@= globals.host
+    call write@(host, form@("@V %d% %v% %d% %s%\n\") %
+      f@(time - globals.start_time) % f@(label) % f@(size) / f@(temporary))
+    if trace
+	call d@(form@("%p%<=visits_log@Navigate(*, %v%)\n\") %
+	  f@(indent) / f@(label))
+
+
+routine visits_next@Navigate
+    takes navigate Navigate
+    takes indent Unsigned
+    returns Visit
+
+    # This routine will return the next {Visit} form the front of
+    # the {visits} queue in {navigate}.  {null@Visit} is returned
+    # if there is no next {Visit} node.
+
+    trace :@= indent < 0xffff0000
+    if trace
+	call d@(form@("%p%=>visits_next@Navigate()\n\") / f@(indent))
+    indent1 :@= indent + 1
+
+    visit :@= null@Visit
+    visits :@= navigate.visits
+    while visits.size != 0
+	visit := visits[0]
+	visit_way :@= visit.way
+	assert visit_way !== null@Way
+	current :@= navigate.current
+	if visit_way == current && current_is_close@(navigate)
+	    # We are close enough, so we are done with the current {visit}:
+	    call lop@(visits)
+
+	    # Go around the loop again; set visit to {null@Visit}
+	    # just in case there are no more places to {visit}:
+	    visit := null@Visit
+	else
+	    # We still need to go visit {visit}:
+	    break
+
+    if trace
+	call d@(form@("%p%<=visits_next@Navigate() => %v%\n\") %
+	  f@(indent) / f@(visit))
+    return visit
+
+
+# {Navigate_Level} routines:
+
+routine f@Navigate_Level
+    takes level Navigate_Level
+    returns String
+
+    # This routine will format {level} and return it.
+
+    value :@= field_next@Format()
+    call trim@(value, 0)
+
+    text :@= ""
+    switch level
+      all_cases_required
+      case camera
+	text := "camera"
+      case move
+	text := "move"
+      case off
+	text := "off"
+      case turn
+	text := "turn"
+    call string_append@(value, text)
+
+    return value
+
+
+routine unsigned@Navigate_Level
+    takes level Navigate_Level
+    returns Unsigned
+
+    # This routine will convert {level} to an unsigned number and return it.
+
+    result :@= 0
+    switch level
+      case off
+	result := 0
+      case camera
+	result := 0x10
+      case turn
+	result := 0x20
+      case move
+	result := 0x30
+    return result
+
+
+# {State} routines:
+
+routine f@State
+    takes state State
+    returns String
+
+    # This routine will format {state} for the next field in the
+    # {null@Format} object.
+
+    value :@= field_next@Format()
+    call trim@(value, 0)
+
+    call string_append@(value, string@(state))
+
+    return value
+
+
+routine string@State
+    takes state State
+    returns String
+
+    # This routine will convert {state} to a {String} and return it.
+
+    result :@= null@String
+    switch state
+      all_cases_required
+      case idle
+	result := "idle"
+      case plan
+	result := "plan"
+      case turn
+	result := "turn"
+      case move
+	result := "move"
+    return result
+
+
+routine unsigned@State
+    takes state State
+    returns Unsigned
+
+    # This routine will convert {state} into an {Unsigned} and return it.
+
+    result :@= 0
+    switch state
+      all_cases_required
+      case idle
+	result := 0
+      case plan
+	result := 1
+      case turn
+	result := 2
+      case move
+	result := 3
+    return result
+
+
+# {Unsigned} routines:
+
+#routine equal@Unsigned
+#    takes unsigned1 Unsigned
+#    takes unsigned2 Unsigned
+#    returns Logical
+#
+#    # This routine will return {true@Logical} if {unsigned1} is equal to
+#    # {unsigned2} and {false@Logical} otherwise.
+#
+#    return unsigned1 = unsigned2
+
+
+# {Update_Reason} routines:
+
+routine f@Update_Reason
+    takes reason Update_Reason
+    returns String
+
+    # This routine will format {reason}.
+
+    value :@= field_next@Format()
+    call trim@(value, 0)
+    call string_append@(value, string@(reason))
+    return value
+
+
+routine string@Update_Reason
+    takes reason Update_Reason
+    returns String
+
+    # This routine will return {reason} as a {String}
+
+    result :@= null@String
+    switch reason
+      all_cases_required
+      case ceiling
+	result := "ceiling"
+      case coprocessor_done
+	result := "coprocessor_done"
+      case coprocessor_error
+	result := "coprocessor_error"
+      case coprocessor_location
+	result := "coprocessor_done"
+      case goto
+	result := "goto"
+      case halt
+	result := "halt"
+      case location
+	result := "location"
+      case position
+	result := "position"
+      case target
+	result := "target"
+      case timeout
+	result := "timeout"
+    return result
+
+# {Visit} routines:
+
+routine create@Visit
+    takes way Way
+    takes focus Way
+    takes path_height Double
+    takes mode Visit_Mode
+    returns Visit
+
+    # This routine will create and return a new {Visit} node that contains
+    # {way}, {focus}, {path_height} and {mode}.
+
+    visit :@= new@Visit()
+    visit.way := way
+    visit.focus := focus
+    visit.mode := mode
+    visit.path_height := path_height
+    return visit
+
+
+routine f@Visit
+    takes visit Visit
+    returns String
+
+    # This routine will format {visit} into a {String} and return it.
+
+    value :@= field_next@Format()
+    call trim@(value, 0)
+
+    if visit == null@Visit
+	call string_append@(value, "[null]")
+    else
+	call string_append@(value, form@("[way=%w% focus=%w%]") %
+	  f@(visit.way) / f@(visit.focus))
+    return value
