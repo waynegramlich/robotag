@@ -331,6 +331,8 @@ routine ceiling_accept@Easy_C
     # This routine is invoked when a connection from the Ceiling process
     # occurs.
 
+    call d@("=>ceiling_accept@Easy_C()\n\")
+
     # Extract some values from {globals}:
     globals :@= ceiling_listen.globals
     ceiling :@= globals.ceiling
@@ -350,6 +352,7 @@ routine ceiling_accept@Easy_C
     # Always send the constants down:
     call send@(constants, ceiling)
 
+    call d@("<=ceiling_accept@Easy_C()\n\")
 
 routine ceiling_read@Easy_C
     takes ceiling Unix_Dispatch[Globals]
@@ -1801,12 +1804,14 @@ routine ceiling_camera@Navigate
 
 	# Turn the ceiling camera on:
 	call write@(ceiling, "level 1\n\")
+	call d@("Br2Cam: \dq\level 1\dq,n\")
 	#call write@(ceiling, "level 2\n\")
 	navigate.ceiling_camera_on := 1t
 	call d@("Br:*******************Ceiling_camera ON\n\")
     else_if !on && navigate.ceiling_camera_on
 	# Get the ceiling camera off:
 	call write@(ceiling, "level 0\n\")
+	call d@("Br2Cam: \dq\level 0\dq,n\")
 	call d@("Br:*******************Ceiling_camera off\n\")
 	navigate.ceiling_camera_on := 0f
 

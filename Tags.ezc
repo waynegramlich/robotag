@@ -10,7 +10,7 @@ library CV
 library Extractor
 library Math
 library Map
-library High_GUI
+library High_GUI2
 library FEC
 
 define SVG			# Scalable Vector Graphics
@@ -279,7 +279,7 @@ routine main@Easy_C
 	    capture :@=
 	      create_camera_capture@CV(capture_any@CV + capture_device)
 	    assert capture !== null@CV_Capture
-	    frame :@= query_frame@CV(capture)
+	    frame :@= query_frame@(capture)
 	    assert frame !== null@CV_Image
 	    width :@= frame.width
 	    height :@= frame.height
@@ -290,7 +290,7 @@ routine main@Easy_C
 	    index := 0
 	    while index < loop_count
 		call d@("#")
-		frame := query_frame@CV(capture)
+		frame := query_frame@(capture)
 		if frame == null@CV_Image
 		    break
 		if show
@@ -633,7 +633,7 @@ routine camera_calibrate@Extractor
     step :@= 0i
     frame :@= 0i
  
-    image :@= query_frame@CV(capture)
+    image :@= query_frame@(capture)
     image_width :@= image.width
     image_height :@= image.height
     image_size :@= create@CV_Size(image_width, image_height)
@@ -708,7 +708,7 @@ routine camera_calibrate@Extractor
 	    call exit@System(-1)
  
 	# Get next image:
-	image := query_frame@CV(capture)
+	image := query_frame@(capture)
 	call show_image@CV("Raw Video", image)
 
     call destroy_window@CV("Snapshot")
@@ -807,7 +807,7 @@ routine camera_calibrate@Extractor
 		c := wait_key@CV(250i)
 	if c = 27i
 	    break
-	image := query_frame@CV(capture)
+	image := query_frame@(capture)
 
 
 routine chessboard_generate@Easy_C

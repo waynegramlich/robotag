@@ -15,13 +15,13 @@ define Globals
 	brain Unix_Dispatch[Globals]
 	brain_command String
 	brain_line String
-	buffer V4L2_Buffer
 	chunks Array[V4L2_Chunk]
 	enabled Unsigned
 	extractor Extractor
 	gray_image CV_Image
 	image_count Unsigned
 	text String
+	v4l2_buffer V4L2_Buffer
 	video Unix_Dispatch[Globals]
 
 routine main@Easy_C
@@ -85,7 +85,7 @@ routine main@Easy_C
       "brain", "localhost", 7777, brain_read@Easy_C)
     globals.brain_command := new@String()
     globals.brain_line := new@String()
-    globals.buffer := new@V4L2_Buffer()
+    globals.v4l2_buffer := new@V4L2_Buffer()
     globals.chunks := chunks
     globals.enabled := enabled
     globals.extractor := extractor
@@ -132,17 +132,23 @@ routine brain_read@Easy_C
 	call exit@System(1)
     else
 	# We have some data in {input_buffer} to process:
+	call d@(form@("Cam:input_buffer=%v%\n\") / f@(input_buffer))
 	index :@= 0
 	while index < size
+	    # Assemble {brain_line} one character at a time:
 	    character :@= input_buffer[index]
 	    call character_append@(brain_line, character)
 	    if character = '\n\'
 		# We have a full line from {brain}, get {brain_command}:
-		brain_command :@= globals.brain_command
+		call d@(form@("Cam:brain_line=%v%\n\") / f@(brain_line))
+
+		# Grab the {brain_command} from {brain_line}:
 		call white_space_lop@(brain_line, null@String)
+		brain_command :@= globals.brain_command
 		call word_lop@(brain_line, brain_command)
 		call white_space_lop@(brain_line, null@String)
 
+		# Dispatch on {brain_command}:
 		if partial_match@(brain_command, "constants") >= 1
 		    call d@(form@("consts=%v% line=%v%\n\") %
 		      f@(brain_command) / f@(brain_line))
@@ -159,10 +165,10 @@ routine brain_read@Easy_C
 			call d@("ceiling camera on\n\")
 		      case 2
 			call d@("ceiling camera on and save images\n\")
-		    #call d@(form@("Cam:level=%d%\n\") / f@(globals.enabled))
+		    call d@(form@("Cam:level=%d%\n\") / f@(globals.enabled))
 		else_if partial_match@(brain_command, "map_ready") >= 1
 		    # map_ready
-		    #call d@("Cam:map_ready\n\")
+		    call d@("Cam:map_ready\n\")
 		else_if partial_match@(brain_command, "tag") >= 1
 		    # tag {id} {x} {y} {angle}
 		    tag :@= tag_create_parse@(map, brain_line)
@@ -266,18 +272,23 @@ routine video_io@Easy_C
     # This routine is invoked each time there is video frame read to
     # be processed.
 
+    call d@("=>video_io@Easy_C\n\")
+
     if read
 	# Extract some values from fields:
 	video_stream :@= video.file_socket_number
 	globals :@= video.globals
-	buffer :@= globals.buffer
+	v4l2_buffer :@= globals.v4l2_buffer
 	chunks :@= globals.chunks
 	extractor :@= globals.extractor
 	gray_image :@= globals.gray_image
 	eagain :@= unix_errno_again@Unsigned
 	eintr :@= unix_errno_intr@Unsigned
 
-	#call d@(form@("globals.enabled=%d%\n\") / f@(globals.enabled))
+	call d@(form@("video_io@Easy:globals.enabled=%d%\n\") /
+	  f@(globals.enabled))
+
+	call d@("video_io@Easy: 1\n\")
 
 	# First we dequeue the frame so we can use it.  As before,
 	# if the operation fails with either a EAGAIN or EINTR,
@@ -286,15 +297,19 @@ routine video_io@Easy_C
 	error_number :@= eagain
 	while result < 0i && (error_number == eagain || error_number == eintr)
 	    # Set {buffer} up to get the available frame index:
-	    call erase@(buffer)
-	    call type_set@(buffer, video_capture@V4L2_Buffer_Type)
-	    call memory_set@(buffer, mmap@V4L2_Memory)
+	    call erase@(v4l2_buffer)
+	    call type_set@(v4l2_buffer, video_capture@V4L2_Buffer_Type)
+	    call memory_set@(v4l2_buffer, mmap@V4L2_Memory)
 		
 	    # Ask for the frame index:
-	    result := dequeue@(buffer, video_stream)
+	    result := dequeue@(v4l2_buffer, video_stream)
 	    error_number := errno@Unix()
+	    #call d@("!")
+	    #call d@(form@("err_no=%v%\n\") /
+	    #  f@(errno_convert@Unix(null@String, error_number)))
 
 	# For now, just print out an error message if an error occurs:
+	call d@("video_io@Easy: 2\n\")
 	if result < 0i
 	    text :@= globals.text
 	    call trim@(text, 0)
@@ -302,8 +317,10 @@ routine video_io@Easy_C
 	      f@(result) % f@(error_number) /
 	      f@(errno_convert@Unix(text, error_number)))
 
+
+	call d@("video_io@Easy: 3\n\")
 	# Grap the chunk associated with the index in {buffer}:
-	buffer_index :@= buffer.index
+	buffer_index :@= v4l2_buffer.index
 	chunks_size :@= chunks.size
 	assert buffer_index < chunks_size
 	chunk :@= chunks[buffer_index]
@@ -315,13 +332,15 @@ routine video_io@Easy_C
 	# We need to give the buffer back to the kernel driver:
 	# We probably want to wrap this baby up in to catch EAGAIN
 	# or EINTR.  For now we just hope it works.
-	assert enqueue@(buffer, video_stream) != -1i
+	assert enqueue@(v4l2_buffer, video_stream) != -1i
 
 	if globals.enabled >= 2
 	    image_count :@= globals.image_count + 1
 	    globals.image_count := image_count
 	    call tga_write@CV_Image(gray_image,
 	      form@("/tmp/extract%d%.tga") / f@(image_count))
+
+	call d@("video_io@Easy: 5\n\")
 
 	if globals.enabled >= 1
 	    brain :@= globals.brain
@@ -387,12 +406,19 @@ routine video_io@Easy_C
 		  f@(robot_x) % f@(robot_y) % f@(robot_bearing * 180.0 / pi) %
 		  f@(size) / f@(temporary))
 
+	call d@("video_io@Easy: 9\n\")
+
+    call d@("<=video_io@Easy_C\n\")
+
 
 routine device_initialize@Easy_C
     takes width Integer
     takes height Integer
     takes file_descriptor Integer
     returns Array[V4L2_Chunk]
+
+    call d@(form@("=>device_initailize@Easy_C(%d%, %d%, %d%)\n\") %
+      f@(width) % f@(height) / f@(file_descriptor))
 
     # Load the linux (version 2) V4L2 device capabilities into {capability}:
     capability :@= new@V4L2_Capability()
@@ -420,7 +446,8 @@ routine device_initialize@Easy_C
     call width_set@(pixel_format, width)
     call height_set@(pixel_format, height)
     call format_set@(pixel_format, yuyv@V4L2_Pixel_Format)
-    call field_set@(pixel_format, interlaced@V4L2_Field)
+    call field_set@(pixel_format, any@V4L2_Field)
+    #call field_set@(pixel_format, interlaced@V4L2_Field)
 
     if set@(format, file_descriptor) = -1i
 	call d@(form@("width=%d% height=%d%\n\") % f@(width) / f@(height))
@@ -456,8 +483,8 @@ routine device_initialize@Easy_C
 	call index_set@(buffer, index)
 	assert query@(buffer, file_descriptor) != -1i
 
-	#call d@(form@("xxx:length=%d% offset=%d%\n\") %
-	#  f@(buffer.length) / f@(buffer.offset))
+	call d@(form@("xxx:length=%d% offset=%d%\n\") %
+	  f@(buffer.length) / f@(buffer.offset))
 
 	# Create a chunk of memory mapped memory:
 	chunk :@= create@V4L2_Chunk(buffer, file_descriptor)
@@ -479,6 +506,9 @@ routine device_initialize@Easy_C
     # Enable video stream:
     assert stream_on@V4L2(file_descriptor,
       video_capture@V4L2_Buffer_Type) != -1i
+
+    call d@(form@("<=device_initailize@Easy_C(%d%, %d%, %d%)\n\") %
+      f@(width) % f@(height) / f@(file_descriptor))
 
     return chunks
 
