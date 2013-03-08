@@ -227,8 +227,8 @@ routine main@Easy_C
     #call path_test@(mesh, debug_stream)
 
     # Kludge to allow changing of video device:
-    video_device_name :@= "/dev/video0"
-    serial_device_name :@= "/dev/ttyS0"
+    video_device_name :@= "1"	# highgui device "1" = /dev/video1
+    serial_device_name :@= "/dev/ttyUSB0"
     host_internet_address :@= "192.168.1.5"
     size :@= arguments.size
     if size >= 2

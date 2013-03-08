@@ -8,20 +8,19 @@ library Easy_C
 library Extractor
 library Unix
 library Unix_Dispatch
-library V4L2
+library High_GUI2
 
 define Globals
     record
 	brain Unix_Dispatch[Globals]
 	brain_command String
 	brain_line String
-	chunks Array[V4L2_Chunk]
 	enabled Unsigned
 	extractor Extractor
 	gray_image CV_Image
 	image_count Unsigned
 	text String
-	v4l2_buffer V4L2_Buffer
+	video_capture CV_Capture
 	video Unix_Dispatch[Globals]
 
 routine main@Easy_C
@@ -39,30 +38,29 @@ routine main@Easy_C
     debug_stream :@= error@Out_Stream
 
     # Kludge to allow changing of video device:
-    video_device_name :@= "/dev/video0"
+    video_device_name :@= "1"
     if arguments.size >= 2
-	video_device_name := arguments[1]
+    	video_device_name := arguments[1]
 
     enabled :@= 0
     if arguments.size >= 3
 	enabled := unsigned_convert@(arguments[2])
     #call d@(form@("enabled=%d%\n\") / f@(enabled))
 
-    # Open {video_device_name}:
-    video_flags :@= unix_file_o_rdwr@Unsigned | unix_file_o_nonblock@Unsigned
-    video_stream :@= open@Unix(video_device_name, video_flags, 0)
-    if video_stream < 0i
-	call d@(form@("Unable to open video device %v%\n\") /
-	  f@(video_device_name))
-	return 1i
-
-    # Initialize the device and get back an array {V4L2_Chunk} object
-    # that correspond to memory mapped page buffers:
-    #width :@= 320i
-    #height :@= 240i
-    width :@= 320i * 2i
-    height :@= 240i * 2i
-    chunks :@= device_initialize@Easy_C(width, height, video_stream)
+    # Initialize the camera device:
+    video_capture :@=
+      create_camera_capture@CV(integer_convert@(video_device_name))
+    width :@= 640i
+    height :@= 480i
+    frames_per_second :@= 10i
+    call set_capture_property@(video_capture,
+      property_frame_width@CV_Capture, double@(width))
+    call set_capture_property@(video_capture,
+      property_frame_height@CV_Capture, double@(height))
+    call set_capture_property@(video_capture,
+      property_fps@CV_Capture, double@(frames_per_second))
+    call set_capture_property@(video_capture,
+      property_convert_rgb@CV_Capture, double@(1))
 
     # Create {gray} image, create {extractor} and initialize both to same
     # {width} and {height}:
@@ -72,40 +70,30 @@ routine main@Easy_C
     call size_set@(extractor, width, height)
 
     map :@= extractor.map
-    #call map_read@(map, "tags.xml")
     map.tag_updated := tag_updated@Easy_C
     map.neighbor_updated := neighbor_updated@Easy_C
 
     # Create {globals} here and fill it in a little later:
     globals :@= one_and_only@Globals()
     dispatcher :@= create@Unix_Dispatcher[Globals](globals)
+    call timeout_enable@(dispatcher, 0, 30000, video_io@Easy_C)
 
     # Fill in {globals}:
     globals.brain := connect_allocate@(dispatcher,
       "brain", "localhost", 7777, brain_read@Easy_C)
     globals.brain_command := new@String()
     globals.brain_line := new@String()
-    globals.v4l2_buffer := new@V4L2_Buffer()
-    globals.chunks := chunks
     globals.enabled := enabled
     globals.extractor := extractor
     globals.gray_image := gray_image
     globals.image_count := 0
     globals.text := new@String()
-    globals.video := open_file_number_allocate@(dispatcher,
-      "video", video_stream, fail_routine@Unix_Dispatch[Globals])
-    call io_enable@(globals.video, video_io@Easy_C, 1t, 0t, 0t)
+    globals.video_capture := video_capture
       
     # Enter the dispatch loop:
     call dispatch_loop@(dispatcher)
 
-    # For now, we exit the program without doing any clean-up:
-    #stop_capturing()
-
-    #uninit_device()
-
-    # Close {device_name}:
-    assert close@Unix(video_stream) = 0i
+    call release_capture@(video_capture)
 
     return 0i
 
@@ -132,7 +120,7 @@ routine brain_read@Easy_C
 	call exit@System(1)
     else
 	# We have some data in {input_buffer} to process:
-	call d@(form@("Cam:input_buffer=%v%\n\") / f@(input_buffer))
+	#call d@(form@("Cam:input_buffer=%v%\n\") / f@(input_buffer))
 	index :@= 0
 	while index < size
 	    # Assemble {brain_line} one character at a time:
@@ -140,7 +128,7 @@ routine brain_read@Easy_C
 	    call character_append@(brain_line, character)
 	    if character = '\n\'
 		# We have a full line from {brain}, get {brain_command}:
-		call d@(form@("Cam:brain_line=%v%\n\") / f@(brain_line))
+		#call d@(form@("Cam:brain_line=%v%\n\") / f@(brain_line))
 
 		# Grab the {brain_command} from {brain_line}:
 		call white_space_lop@(brain_line, null@String)
@@ -263,84 +251,40 @@ routine tag_updated@Easy_C
 
 
 routine video_io@Easy_C
-    takes video Unix_Dispatch[Globals]
-    takes read Logical
-    takes write Logical
-    takes except Logical
+    takes video Unix_Dispatcher[Globals]
     returns_nothing
 
     # This routine is invoked each time there is video frame read to
     # be processed.
 
-    call d@("=>video_io@Easy_C\n\")
+    #call d@("=>video_io@Easy_C\n\")
 
-    if read
+    #if read
+    if 1t
 	# Extract some values from fields:
-	video_stream :@= video.file_socket_number
+	#video_stream :@= video.file_socket_number
 	globals :@= video.globals
-	v4l2_buffer :@= globals.v4l2_buffer
-	chunks :@= globals.chunks
+	video_capture :@= globals.video_capture
 	extractor :@= globals.extractor
 	gray_image :@= globals.gray_image
-	eagain :@= unix_errno_again@Unsigned
-	eintr :@= unix_errno_intr@Unsigned
 
-	call d@(form@("video_io@Easy:globals.enabled=%d%\n\") /
-	  f@(globals.enabled))
-
-	call d@("video_io@Easy: 1\n\")
-
-	# First we dequeue the frame so we can use it.  As before,
-	# if the operation fails with either a EAGAIN or EINTR,
-	# we retry the dequeue operation:
-	result :@= -1i
-	error_number :@= eagain
-	while result < 0i && (error_number == eagain || error_number == eintr)
-	    # Set {buffer} up to get the available frame index:
-	    call erase@(v4l2_buffer)
-	    call type_set@(v4l2_buffer, video_capture@V4L2_Buffer_Type)
-	    call memory_set@(v4l2_buffer, mmap@V4L2_Memory)
-		
-	    # Ask for the frame index:
-	    result := dequeue@(v4l2_buffer, video_stream)
-	    error_number := errno@Unix()
-	    #call d@("!")
-	    #call d@(form@("err_no=%v%\n\") /
-	    #  f@(errno_convert@Unix(null@String, error_number)))
-
-	# For now, just print out an error message if an error occurs:
-	call d@("video_io@Easy: 2\n\")
-	if result < 0i
-	    text :@= globals.text
-	    call trim@(text, 0)
-	    call d@(form@("Dequeue error:r=%d% err=%d% err=%v%\n\") %
-	      f@(result) % f@(error_number) /
-	      f@(errno_convert@Unix(text, error_number)))
-
-
-	call d@("video_io@Easy: 3\n\")
 	# Grap the chunk associated with the index in {buffer}:
-	buffer_index :@= v4l2_buffer.index
-	chunks_size :@= chunks.size
-	assert buffer_index < chunks_size
-	chunk :@= chunks[buffer_index]
+	#buffer_index :@= v4l2_buffer.index
+	#chunks_size :@= chunks.size
+	#assert buffer_index < chunks_size
+	#chunk :@= chunks[buffer_index]
 
-	# Process image:
-	#call d@(".")
-	call yuvu_to_gray@(chunk, gray_image)
+	# Grab a camera frame:
+	frame_image :@= query_frame@(video_capture)
 
-	# We need to give the buffer back to the kernel driver:
-	# We probably want to wrap this baby up in to catch EAGAIN
-	# or EINTR.  For now we just hope it works.
-	assert enqueue@(v4l2_buffer, video_stream) != -1i
+	# Convert to grey scale:
+	call cvt_color@CV(frame_image, gray_image, rgb_to_gray@CV)
 
 	if globals.enabled >= 2
 	    image_count :@= globals.image_count + 1
 	    globals.image_count := image_count
 	    call tga_write@CV_Image(gray_image,
 	      form@("/tmp/extract%d%.tga") / f@(image_count))
-
-	call d@("video_io@Easy: 5\n\")
 
 	if globals.enabled >= 1
 	    brain :@= globals.brain
@@ -406,111 +350,9 @@ routine video_io@Easy_C
 		  f@(robot_x) % f@(robot_y) % f@(robot_bearing * 180.0 / pi) %
 		  f@(size) / f@(temporary))
 
-	call d@("video_io@Easy: 9\n\")
 
-    call d@("<=video_io@Easy_C\n\")
+    #call d@("<=video_io@Easy_C\n,n\")
 
-
-routine device_initialize@Easy_C
-    takes width Integer
-    takes height Integer
-    takes file_descriptor Integer
-    returns Array[V4L2_Chunk]
-
-    call d@(form@("=>device_initailize@Easy_C(%d%, %d%, %d%)\n\") %
-      f@(width) % f@(height) / f@(file_descriptor))
-
-    # Load the linux (version 2) V4L2 device capabilities into {capability}:
-    capability :@= new@V4L2_Capability()
-    assert query@(capability, file_descriptor) = 0i
-
-    # Ensure that we have a video capture device:
-    capabilities :@= capability.capabilities
-    assert capabilities & video_capture@V4L2_Capability != 0
-    assert capabilities & streaming@V4L2_Capability != 0
-
-    # Deal with devices that support cropping:
-    crop_capability :@= new@V4L2_Crop_Capability()
-    call type_set@(crop_capability, video_capture@V4L2_Buffer_Type)
-    if query@(crop_capability, file_descriptor) = 0i
-	# We have to worry about cropping:
-	crop :@= new@V4L2_Crop()
-	call type_set@(crop, video_capture@V4L2_Buffer_Type)
-	call contents_copy@(crop.crop_rectangle,
-	  crop_capability.default_rectangle)
-	call set@(crop, file_descriptor)	# Ignore any errors
-
-    format :@= new@V4L2_Format()
-    call type_set@(format, video_capture@V4L2_Buffer_Type)
-    pixel_format :@= format.pixel_format
-    call width_set@(pixel_format, width)
-    call height_set@(pixel_format, height)
-    call format_set@(pixel_format, yuyv@V4L2_Pixel_Format)
-    call field_set@(pixel_format, any@V4L2_Field)
-    #call field_set@(pixel_format, interlaced@V4L2_Field)
-
-    if set@(format, file_descriptor) = -1i
-	call d@(form@("width=%d% height=%d%\n\") % f@(width) / f@(height))
-	assert 0f
-    # Note: {width} and {height} may have changed in {pixel_format}:
-
-    # Buggy driver paranoia:
-    minimum :@= pixel_format.width * 2i
-    if pixel_format.bytes_per_line < minimum
-	call bytes_per_line_set@(pixel_format, minimum)
-    minimum := pixel_format.bytes_per_line * pixel_format.height
-    if pixel_format.size_image < minimum
-	call size_image_set@(pixel_format, minimum)
-
-    # Allocate some memory map buffers from {file_descriptor}:
-    request_buffers :@= create@V4L2_Request_Buffers(16,
-      video_capture@V4L2_Buffer_Type, mmap@V4L2_Memory)
-    assert request@(request_buffers, file_descriptor) != -1i
-    count :@= unsigned@(request_buffers.count)
-    # The number of buffers actually allocated is now in {count}:
-
-    # Make sure we got a least 2 buffers:
-    assert count >= 2
-
-    # Now start memory mapping the buffers into our address space:
-    chunks :@= new@Array[V4L2_Chunk]()
-    buffer :@= new@V4L2_Buffer()
-    index :@= 0
-    while index < count
-	call erase@(buffer)
-	call type_set@(buffer, video_capture@V4L2_Buffer_Type)
-	call memory_set@(buffer, mmap@V4L2_Memory)
-	call index_set@(buffer, index)
-	assert query@(buffer, file_descriptor) != -1i
-
-	call d@(form@("xxx:length=%d% offset=%d%\n\") %
-	  f@(buffer.length) / f@(buffer.offset))
-
-	# Create a chunk of memory mapped memory:
-	chunk :@= create@V4L2_Chunk(buffer, file_descriptor)
-	assert chunk !== null@V4L2_Chunk
-	call append@(chunks, chunk)
-
-	index := index + 1
-
-    # Why do we do this again?:
-    index := 0
-    while index < count
-	call erase@(buffer)
-	call type_set@(buffer, video_capture@V4L2_Buffer_Type)
-	call memory_set@(buffer, mmap@V4L2_Memory)
-	call index_set@(buffer, index)
-	assert query@(buffer, file_descriptor) != -1i
-	index := index + 1
-
-    # Enable video stream:
-    assert stream_on@V4L2(file_descriptor,
-      video_capture@V4L2_Buffer_Type) != -1i
-
-    call d@(form@("<=device_initailize@Easy_C(%d%, %d%, %d%)\n\") %
-      f@(width) % f@(height) / f@(file_descriptor))
-
-    return chunks
 
 # {Globals} routines:
 
