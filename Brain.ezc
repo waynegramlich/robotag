@@ -13,7 +13,6 @@ library Math
 
 # {host_read@Easy_C} is the routine that processes commands from the host.
 
-
 # The {Marker}, {Segment}, and {Mesh} data structures are used to
 # keep track of the ceiling marker locations read in from tag.ids.
 # The {Mesh} object can be used for path planning.
@@ -326,6 +325,7 @@ routine main@Easy_C
 
 routine ceiling_accept@Easy_C
     takes ceiling_listen Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine is invoked when a connection from the Ceiling process
@@ -356,6 +356,7 @@ routine ceiling_accept@Easy_C
 
 routine ceiling_read@Easy_C
     takes ceiling Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine is invoked when there input to be handled from {ceiling}.
@@ -540,6 +541,7 @@ routine ceiling_read@Easy_C
 
 routine coprocessor_read@Easy_C
     takes coprocessor Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine is invoked each time there is I/O that needs to
@@ -855,6 +857,7 @@ routine coprocessor_read@Easy_C
 
 routine host_read@Easy_C
     takes dispatch Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine is invoked whenever that is data to be read from the host.
@@ -870,7 +873,7 @@ routine host_read@Easy_C
     size :@= input_buffer.size
     if size = 0
 	# We lost the connect from the host:
-	call d@("Lost host connection\n\")
+	call d@(form@("Lost host connection (from=%v%)\n\") / f@(from))
 
 	# Do we really want to exit?
 	call exit@System(1)
@@ -1500,10 +1503,13 @@ routine coprocessor_location_set@Globals
     pi :@= globals.extractor.pi
 
     # Send the position set command down:
-    call coprocessor_command@(globals, form@("p %y% %y% %y% %d% %d%") %
+    #call coprocessor_command@(globals, form@("p %y% %y% %y% %d% %d%") %
+    #  f@(integer@(x * 10.0)) % f@(integer@(y * 10.0)) %
+    #  f@(integer@(bearing * 180.0 / pi)) % f@(optional) /
+    #  f@(unsigned@(from[0])), 1, from)
+    call coprocessor_command@(globals, form@("p %y% %y% %y% %d%") %
       f@(integer@(x * 10.0)) % f@(integer@(y * 10.0)) %
-      f@(integer@(bearing * 180.0 / pi)) % f@(optional) /
-      f@(unsigned@(from[0])), 1, from)
+      f@(integer@(bearing * 180.0 / pi)) / f@(optional), 1, from)
 
 
 routine coprocessor_pid_set@Globals

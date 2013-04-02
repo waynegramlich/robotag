@@ -100,6 +100,7 @@ routine main@Easy_C
 
 routine brain_read@Easy_C
     takes brain Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This process will process input from {brain}.

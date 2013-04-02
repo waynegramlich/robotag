@@ -178,7 +178,10 @@ routine empty_create@Constants
     # This routine will create and return an empty {Constants} object.
 
     constants :@= new@Constants()
-    constants.inches_across_frame := 104.375  #FIXME: Magic constant for now!!!
+    # Magic constant for gramlich house celing:
+    #constants.inches_across_frame := 104.375  #FIXME: Magic constant for now!!!
+    # Magic constant for Hacker DoJo:
+    constants.inches_across_frame := 135.000  #FIXME: Magic constant for now!!!
     return constants
 
 

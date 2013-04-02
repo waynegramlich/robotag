@@ -161,6 +161,7 @@ routine non_block@Easy_C
 
 routine brain_connect@Easy_C
     takes brain_listen Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine is invoked whenever there is a client connect occurs
@@ -185,6 +186,7 @@ routine brain_connect@Easy_C
 
 routine brain_read@Easy_C
     takes brain Unix_Dispatch[Globals]
+    takes from_debug String
     returns_nothing
 
     # This routine is invoked whenever there is a data from {brain}.
@@ -575,6 +577,7 @@ routine brain_read@Easy_C
 
 routine console_read@Easy_C
     takes console Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine is invoked whenever there is console input available.
@@ -664,6 +667,7 @@ routine console_read@Easy_C
 
 routine gui_connect@Easy_C
     takes gui_listen Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine is invoked whenever there is a client connect occurs
@@ -692,6 +696,7 @@ routine gui_connect@Easy_C
 
 routine gui_read@Easy_C
     takes gui Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine will take some data from {gui} and process it.
@@ -920,6 +925,7 @@ routine gui_read@Easy_C
 
 routine tar_read@Easy_C
     takes tar Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine will take some data from {tar} and send it to
@@ -944,6 +950,7 @@ routine tar_read@Easy_C
 
 routine upload_connect@Easy_C
     takes upload_listen Unix_Dispatch[Globals]
+    takes from String
     returns_nothing
 
     # This routine is invoked whenever whenever a connection to port

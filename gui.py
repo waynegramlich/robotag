@@ -894,7 +894,7 @@ class Application(Frame):
                     # print "we have some constants"
 
 		    #print "line=", line
-		    #print "constants=", values, "size=", size
+		    print "constants=", values, "size=", size
 
 		    # Grab the constants from the command {values}:
 		    bearing_limit = float(values[1])

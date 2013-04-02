@@ -40,8 +40,8 @@ routine main@Easy_C
     show :@= 0f
     track :@= 0f
     tag_ids :@= new@Array[Unsigned]()
-    #tag_size :@= 160
-    tag_size :@= 200
+    tag_size :@= 160
+    #tag_size :@= 180
     pi :@= map.pi
 
     # Parse command line arguments:
@@ -948,20 +948,19 @@ routine tag_svg_write@Extractor
     # {tag_size} millimeters square.  {border} specifies whether there
     # is a black line drawn around the "white" border of the tag.
 
-    assert !border
-
     cell_width :@= double@(tag_size) / 10.0
     offset :@= cell_width / 2.0
     offset := 5.0
     length :@= 10.0 * cell_width
-    length_plus :@= length + cell_width * 2.0
+    length_plus :@= length + 5.0 * cell_width
 
     # Open the file for writing:
     base_name :@= read_only_copy@(form@("tag%d%") / f@(tag_id))
-    svg :@= open@SVG(base_name, length + offset, length_plus, 1.0, 1.0, "mm")
+    svg :@= open@SVG(base_name,
+      length + 3.0 * cell_width, length_plus, 1.0, 1.0, "mm")
     assert svg !== null@SVG
     svg.x_offset := offset
-    svg.y_offset := offset
+    svg.y_offset := offset + cell_width
 
     # Initialize {tag_bytes} to contain 8 bytes of 0:
     tag_bytes :@= new@Array[Unsigned]()
@@ -1014,12 +1013,39 @@ routine tag_svg_write@Extractor
     #  sizeof(tagValues), tagValues, rv_bitfield_mapping_north);
 
     # Print a line border around everything:
-    #if border
-    #	color :@= "black"
-    #	call line@(svg, 0.0, 0.0, length, 0.0, color)
-    #	call line@(svg, 0.0, 0.0, 0.0, length, color)
-    #	call line@(svg, length, 0.0, length, length, color)
-    #	call line@(svg, 0.0, length, length, length, color)
+    if border
+	x_or_y :@= length + 2.0 * cell_width
+	d :@= 2.0
+
+    	color :@= "black"
+	x1 :@= 0.0
+	x2 :@= x_or_y
+
+	#  +--                                   --+
+	y :@= -cell_width
+	call line@(svg, x1, y, x1 + d, y,     color)
+	call line@(svg, x2, y, x2 - d, y,     color)
+
+	#  +--                                   --+
+	#  |                                       |
+	y := 0.0
+	call line@(svg, x1, y, x1 + d, y,     color)
+	call line@(svg, x1, y, x1,     y + d, color)
+	call line@(svg, x2, y, x2 - d, y,     color)
+	call line@(svg, x2, y, x2,     y + d, color)
+
+	#  |                                       |
+	#  +--                                   --+
+	y := x_or_y
+	call line@(svg, x1, y, x1 + d, y,     color)
+	call line@(svg, x1, y, x1,     y - d, color)
+	call line@(svg, x2, y, x2 - d, y,     color)
+	call line@(svg, x2, y, x2,     y - d, color)
+
+	#  +--                                   --+
+	y := x_or_y + cell_width
+	call line@(svg, x1, y, x1 + d, y,     color)
+	call line@(svg, x2, y, x2 - d, y,     color)
 
     # Print the bit border:
     # Lower row:
@@ -1043,12 +1069,12 @@ routine tag_svg_write@Extractor
     tag_name :@= read_only_copy@(form@("%d%") / f@(tag_id))
     if border
 	call text@(svg, tag_name,
-	  length * 7.0 / 16.0, length_plus - cell_width, "ariel",
-	  unsigned@(cell_width * 3.0))
+	  6.0 * cell_width, 12.25 * cell_width,
+	  "ariel", unsigned@(cell_width) / 2)
     else
 	call text@(svg, tag_name,
-	  length * 7.0 / 16.0, length_plus - cell_width, "ariel",
-	  unsigned@(cell_width * 3.0))
+	  5.0 * cell_width, 12.25 * cell_width,
+	  "ariel", unsigned@(cell_width) / 2)
 
     # Close the file:
     call close@(svg)

@@ -1,13 +1,12 @@
 <Robot>
  <Constants Bearing_Limit="0.00" Camera_DX="-15.00" Camera_DY="0.00" Camera_Twist="0.00" Grip_P="0.00" Grip_I="0.00" Grip_D="0.00" Left_Force="0" Linear="0.00" PID_P="0.00" PID_I="0.00" PID_D="0.00" Ramp="0" Right_Force="0" Speed_Limit="0" Stall="0" Target_Limit="0.00" Twist_Limit="0"/>
- <Map Tags_Size="7" Neighbors_Size="22" Ways_Size="0" Segments_Size="0">
+ <Map Tags_Size="6" Neighbors_Size="22" Ways_Size="0" Segments_Size="0">
   <Tag Id="41" Bearing="0.00" Edge_Length="7.8125" X="0.00" Y="0.00"/>
   <Tag Id="42" Bearing="6.88" Edge_Length="7.8125" X="30.75" Y="40.79"/>
   <Tag Id="43" Bearing="5.05" Edge_Length="7.8125" X="113.33" Y="45.80"/>
   <Tag Id="45" Bearing="7.25" Edge_Length="7.8125" X="6.83" Y="60.10"/>
   <Tag Id="46" Bearing="5.59" Edge_Length="7.8125" X="69.53" Y="74.83"/>
   <Tag Id="48" Bearing="-6.83" Edge_Length="7.8125" X="48.96" Y="9.14"/>
-  <Tag Id="1600" Bearing="0.00" Edge_Length="7.8125" X="123456789.00" Y="0.00"/>
   <Neighbor Origin_Id="41" Target_Id="42" Goodness_Metric="3.00" Target_Angle="52.45" Target_Distance="51.43" Target_Twist="4.83"/>
   <Neighbor Origin_Id="41" Target_Id="45" Goodness_Metric="53.00" Target_Angle="82.75" Target_Distance="61.94" Target_Twist="7.34"/>
   <Neighbor Origin_Id="41" Target_Id="48" Goodness_Metric="26.00" Target_Angle="10.57" Target_Distance="49.81" Target_Twist="-6.83"/>

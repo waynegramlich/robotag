@@ -1,0 +1,117 @@
+<Robot>
+ <Constants Bearing_Limit="286.48" Camera_DX="-15.00" Camera_DY="0.00" Camera_Twist="0.00" Grip_P="80.00" Grip_I="0.00" Grip_D="0.00" Left_Force="256" Linear="1.00" PID_P="80.00" PID_I="0.00" PID_D="0.00" Ramp="2" Right_Force="256" Speed_Limit="80" Stall="32" Target_Limit="8.00" Twist_Limit="10"/>
+ <Map Tags_Size="12" Neighbors_Size="84" Ways_Size="9" Segments_Size="7">
+  <Tag Id="1600" Bearing="0.00" Edge_Length="7.8125" X="0.00" Y="0.00"/>
+  <Tag Id="1601" Bearing="-0.03" Edge_Length="7.8125" X="0.89" Y="47.56"/>
+  <Tag Id="1602" Bearing="2.57" Edge_Length="7.8125" X="0.83" Y="84.44"/>
+  <Tag Id="1605" Bearing="-1.23" Edge_Length="7.8125" X="38.06" Y="10.16"/>
+  <Tag Id="1606" Bearing="-0.43" Edge_Length="7.8125" X="38.03" Y="47.28"/>
+  <Tag Id="1607" Bearing="1.78" Edge_Length="7.8125" X="38.32" Y="85.13"/>
+  <Tag Id="1610" Bearing="0.12" Edge_Length="7.8125" X="76.12" Y="8.68"/>
+  <Tag Id="1611" Bearing="-0.04" Edge_Length="7.8125" X="76.06" Y="47.21"/>
+  <Tag Id="1612" Bearing="0.13" Edge_Length="7.8125" X="76.05" Y="85.29"/>
+  <Tag Id="1615" Bearing="0.01" Edge_Length="7.8125" X="118.50" Y="11.07"/>
+  <Tag Id="1616" Bearing="2.25" Edge_Length="7.8125" X="114.83" Y="48.74"/>
+  <Tag Id="1617" Bearing="1.74" Edge_Length="7.8125" X="113.85" Y="87.41"/>
+  <Neighbor Origin_Id="1600" Target_Id="1601" Goodness_Metric="41.00" Target_Angle="88.90" Target_Distance="47.99" Target_Twist="0.45"/>
+  <Neighbor Origin_Id="1600" Target_Id="1605" Goodness_Metric="10.00" Target_Angle="14.94" Target_Distance="39.39" Target_Twist="-1.23"/>
+  <Neighbor Origin_Id="1600" Target_Id="1606" Goodness_Metric="0.00" Target_Angle="52.02" Target_Distance="61.25" Target_Twist="0.37"/>
+  <Neighbor Origin_Id="1600" Target_Id="1610" Goodness_Metric="23.00" Target_Angle="8.49" Target_Distance="77.86" Target_Twist="0.74"/>
+  <Neighbor Origin_Id="1600" Target_Id="1611" Goodness_Metric="67.00" Target_Angle="32.87" Target_Distance="89.60" Target_Twist="-0.40"/>
+  <Neighbor Origin_Id="1601" Target_Id="1600" Goodness_Metric="41.00" Target_Angle="-91.54" Target_Distance="47.99" Target_Twist="-0.45"/>
+  <Neighbor Origin_Id="1601" Target_Id="1602" Goodness_Metric="3.00" Target_Angle="89.82" Target_Distance="37.12" Target_Twist="1.73"/>
+  <Neighbor Origin_Id="1601" Target_Id="1605" Goodness_Metric="14.00" Target_Angle="-46.07" Target_Distance="52.56" Target_Twist="-2.24"/>
+  <Neighbor Origin_Id="1601" Target_Id="1606" Goodness_Metric="40.00" Target_Angle="-0.41" Target_Distance="37.14" Target_Twist="-0.40"/>
+  <Neighbor Origin_Id="1601" Target_Id="1607" Goodness_Metric="108.00" Target_Angle="45.11" Target_Distance="52.92" Target_Twist="1.00"/>
+  <Neighbor Origin_Id="1601" Target_Id="1611" Goodness_Metric="45.00" Target_Angle="0.56" Target_Distance="76.15" Target_Twist="-0.38"/>
+  <Neighbor Origin_Id="1601" Target_Id="1612" Goodness_Metric="28.00" Target_Angle="26.93" Target_Distance="84.32" Target_Twist="-0.01"/>
+  <Neighbor Origin_Id="1602" Target_Id="1601" Goodness_Metric="3.00" Target_Angle="-91.91" Target_Distance="37.12" Target_Twist="-1.73"/>
+  <Neighbor Origin_Id="1602" Target_Id="1606" Goodness_Metric="167.00" Target_Angle="-45.63" Target_Distance="53.24" Target_Twist="-2.37"/>
+  <Neighbor Origin_Id="1602" Target_Id="1607" Goodness_Metric="172.00" Target_Angle="-0.77" Target_Distance="37.69" Target_Twist="0.01"/>
+  <Neighbor Origin_Id="1602" Target_Id="1611" Goodness_Metric="49.00" Target_Angle="-27.30" Target_Distance="84.28" Target_Twist="-2.11"/>
+  <Neighbor Origin_Id="1602" Target_Id="1612" Goodness_Metric="42.00" Target_Angle="-1.10" Target_Distance="74.97" Target_Twist="-2.25"/>
+  <Neighbor Origin_Id="1605" Target_Id="1600" Goodness_Metric="10.00" Target_Angle="-163.83" Target_Distance="39.39" Target_Twist="1.23"/>
+  <Neighbor Origin_Id="1605" Target_Id="1601" Goodness_Metric="14.00" Target_Angle="136.18" Target_Distance="52.56" Target_Twist="2.24"/>
+  <Neighbor Origin_Id="1605" Target_Id="1606" Goodness_Metric="110.00" Target_Angle="91.27" Target_Distance="37.12" Target_Twist="0.80"/>
+  <Neighbor Origin_Id="1605" Target_Id="1607" Goodness_Metric="1.00" Target_Angle="92.06" Target_Distance="75.12" Target_Twist="4.40"/>
+  <Neighbor Origin_Id="1605" Target_Id="1610" Goodness_Metric="37.00" Target_Angle="1.07" Target_Distance="37.76" Target_Twist="1.65"/>
+  <Neighbor Origin_Id="1605" Target_Id="1611" Goodness_Metric="77.00" Target_Angle="46.55" Target_Distance="53.50" Target_Twist="1.18"/>
+  <Neighbor Origin_Id="1605" Target_Id="1612" Goodness_Metric="10.00" Target_Angle="65.75" Target_Distance="84.75" Target_Twist="3.05"/>
+  <Neighbor Origin_Id="1605" Target_Id="1617" Goodness_Metric="15.00" Target_Angle="48.46" Target_Distance="105.72" Target_Twist="4.47"/>
+  <Neighbor Origin_Id="1606" Target_Id="1600" Goodness_Metric="0.00" Target_Angle="-128.34" Target_Distance="61.25" Target_Twist="-0.37"/>
+  <Neighbor Origin_Id="1606" Target_Id="1601" Goodness_Metric="40.00" Target_Angle="179.99" Target_Distance="37.14" Target_Twist="0.40"/>
+  <Neighbor Origin_Id="1606" Target_Id="1602" Goodness_Metric="167.00" Target_Angle="136.75" Target_Distance="53.24" Target_Twist="2.37"/>
+  <Neighbor Origin_Id="1606" Target_Id="1605" Goodness_Metric="110.00" Target_Angle="-89.52" Target_Distance="37.12" Target_Twist="-0.80"/>
+  <Neighbor Origin_Id="1606" Target_Id="1607" Goodness_Metric="1.00" Target_Angle="90.53" Target_Distance="37.53" Target_Twist="1.92"/>
+  <Neighbor Origin_Id="1606" Target_Id="1610" Goodness_Metric="62.00" Target_Angle="-45.83" Target_Distance="53.27" Target_Twist="-2.00"/>
+  <Neighbor Origin_Id="1606" Target_Id="1611" Goodness_Metric="1.00" Target_Angle="1.27" Target_Distance="38.37" Target_Twist="0.25"/>
+  <Neighbor Origin_Id="1606" Target_Id="1612" Goodness_Metric="6.00" Target_Angle="45.63" Target_Distance="53.60" Target_Twist="0.53"/>
+  <Neighbor Origin_Id="1606" Target_Id="1616" Goodness_Metric="37.00" Target_Angle="1.55" Target_Distance="76.48" Target_Twist="2.36"/>
+  <Neighbor Origin_Id="1606" Target_Id="1617" Goodness_Metric="42.00" Target_Angle="27.76" Target_Distance="84.20" Target_Twist="2.46"/>
+  <Neighbor Origin_Id="1607" Target_Id="1601" Goodness_Metric="108.00" Target_Angle="-135.89" Target_Distance="52.92" Target_Twist="-1.00"/>
+  <Neighbor Origin_Id="1607" Target_Id="1602" Goodness_Metric="172.00" Target_Angle="179.22" Target_Distance="37.69" Target_Twist="-0.01"/>
+  <Neighbor Origin_Id="1607" Target_Id="1605" Goodness_Metric="1.00" Target_Angle="-92.34" Target_Distance="75.12" Target_Twist="-4.40"/>
+  <Neighbor Origin_Id="1607" Target_Id="1606" Goodness_Metric="1.00" Target_Angle="-91.39" Target_Distance="37.53" Target_Twist="-1.92"/>
+  <Neighbor Origin_Id="1607" Target_Id="1610" Goodness_Metric="51.00" Target_Angle="-65.19" Target_Distance="84.92" Target_Twist="-3.13"/>
+  <Neighbor Origin_Id="1607" Target_Id="1611" Goodness_Metric="3.00" Target_Angle="-45.16" Target_Distance="53.52" Target_Twist="-0.78"/>
+  <Neighbor Origin_Id="1607" Target_Id="1612" Goodness_Metric="1.00" Target_Angle="-0.25" Target_Distance="37.70" Target_Twist="-0.17"/>
+  <Neighbor Origin_Id="1607" Target_Id="1616" Goodness_Metric="35.00" Target_Angle="-26.84" Target_Distance="84.51" Target_Twist="0.14"/>
+  <Neighbor Origin_Id="1607" Target_Id="1617" Goodness_Metric="59.00" Target_Angle="-0.28" Target_Distance="74.90" Target_Twist="-0.40"/>
+  <Neighbor Origin_Id="1610" Target_Id="1600" Goodness_Metric="23.00" Target_Angle="-172.26" Target_Distance="77.86" Target_Twist="-0.74"/>
+  <Neighbor Origin_Id="1610" Target_Id="1605" Goodness_Metric="37.00" Target_Angle="179.42" Target_Distance="37.76" Target_Twist="-1.65"/>
+  <Neighbor Origin_Id="1610" Target_Id="1606" Goodness_Metric="62.00" Target_Angle="136.17" Target_Distance="53.27" Target_Twist="2.00"/>
+  <Neighbor Origin_Id="1610" Target_Id="1607" Goodness_Metric="51.00" Target_Angle="117.94" Target_Distance="84.92" Target_Twist="3.13"/>
+  <Neighbor Origin_Id="1610" Target_Id="1611" Goodness_Metric="123.00" Target_Angle="89.97" Target_Distance="38.53" Target_Twist="-0.16"/>
+  <Neighbor Origin_Id="1610" Target_Id="1612" Goodness_Metric="0.00" Target_Angle="91.32" Target_Distance="76.67" Target_Twist="1.35"/>
+  <Neighbor Origin_Id="1610" Target_Id="1617" Goodness_Metric="4.00" Target_Angle="64.88" Target_Distance="85.35" Target_Twist="2.44"/>
+  <Neighbor Origin_Id="1611" Target_Id="1600" Goodness_Metric="67.00" Target_Angle="-146.73" Target_Distance="89.60" Target_Twist="0.40"/>
+  <Neighbor Origin_Id="1611" Target_Id="1601" Goodness_Metric="45.00" Target_Angle="-179.06" Target_Distance="76.15" Target_Twist="0.38"/>
+  <Neighbor Origin_Id="1611" Target_Id="1602" Goodness_Metric="49.00" Target_Angle="154.81" Target_Distance="84.28" Target_Twist="2.11"/>
+  <Neighbor Origin_Id="1611" Target_Id="1605" Goodness_Metric="77.00" Target_Angle="-134.62" Target_Distance="53.50" Target_Twist="-1.18"/>
+  <Neighbor Origin_Id="1611" Target_Id="1606" Goodness_Metric="1.00" Target_Angle="-178.98" Target_Distance="38.37" Target_Twist="-0.25"/>
+  <Neighbor Origin_Id="1611" Target_Id="1607" Goodness_Metric="3.00" Target_Angle="135.62" Target_Distance="53.52" Target_Twist="0.78"/>
+  <Neighbor Origin_Id="1611" Target_Id="1610" Goodness_Metric="123.00" Target_Angle="-89.87" Target_Distance="38.53" Target_Twist="0.16"/>
+  <Neighbor Origin_Id="1611" Target_Id="1612" Goodness_Metric="2.00" Target_Angle="90.66" Target_Distance="37.71" Target_Twist="0.01"/>
+  <Neighbor Origin_Id="1611" Target_Id="1615" Goodness_Metric="314.00" Target_Angle="-44.05" Target_Distance="54.23" Target_Twist="-0.19"/>
+  <Neighbor Origin_Id="1611" Target_Id="1616" Goodness_Metric="158.00" Target_Angle="1.11" Target_Distance="37.17" Target_Twist="2.62"/>
+  <Neighbor Origin_Id="1611" Target_Id="1617" Goodness_Metric="173.00" Target_Angle="46.13" Target_Distance="53.09" Target_Twist="0.92"/>
+  <Neighbor Origin_Id="1612" Target_Id="1601" Goodness_Metric="28.00" Target_Angle="-153.05" Target_Distance="84.32" Target_Twist="0.01"/>
+  <Neighbor Origin_Id="1612" Target_Id="1602" Goodness_Metric="42.00" Target_Angle="-178.85" Target_Distance="74.97" Target_Twist="2.25"/>
+  <Neighbor Origin_Id="1612" Target_Id="1605" Goodness_Metric="10.00" Target_Angle="-117.30" Target_Distance="84.75" Target_Twist="-3.05"/>
+  <Neighbor Origin_Id="1612" Target_Id="1606" Goodness_Metric="6.00" Target_Angle="-134.90" Target_Distance="53.60" Target_Twist="-0.53"/>
+  <Neighbor Origin_Id="1612" Target_Id="1607" Goodness_Metric="1.00" Target_Angle="179.92" Target_Distance="37.70" Target_Twist="0.17"/>
+  <Neighbor Origin_Id="1612" Target_Id="1610" Goodness_Metric="0.00" Target_Angle="-90.03" Target_Distance="76.67" Target_Twist="-1.35"/>
+  <Neighbor Origin_Id="1612" Target_Id="1611" Goodness_Metric="2.00" Target_Angle="-89.35" Target_Distance="37.71" Target_Twist="-0.01"/>
+  <Neighbor Origin_Id="1612" Target_Id="1616" Goodness_Metric="125.00" Target_Angle="-45.03" Target_Distance="53.98" Target_Twist="0.57"/>
+  <Neighbor Origin_Id="1612" Target_Id="1617" Goodness_Metric="103.00" Target_Angle="-0.19" Target_Distance="37.93" Target_Twist="0.35"/>
+  <Neighbor Origin_Id="1615" Target_Id="1611" Goodness_Metric="314.00" Target_Angle="136.14" Target_Distance="54.23" Target_Twist="0.19"/>
+  <Neighbor Origin_Id="1616" Target_Id="1606" Goodness_Metric="37.00" Target_Angle="179.19" Target_Distance="76.48" Target_Twist="-2.36"/>
+  <Neighbor Origin_Id="1616" Target_Id="1607" Goodness_Metric="35.00" Target_Angle="153.02" Target_Distance="84.51" Target_Twist="-0.14"/>
+  <Neighbor Origin_Id="1616" Target_Id="1611" Goodness_Metric="158.00" Target_Angle="178.49" Target_Distance="37.17" Target_Twist="-2.62"/>
+  <Neighbor Origin_Id="1616" Target_Id="1612" Goodness_Metric="125.00" Target_Angle="134.40" Target_Distance="53.98" Target_Twist="-0.57"/>
+  <Neighbor Origin_Id="1616" Target_Id="1617" Goodness_Metric="2.00" Target_Angle="90.60" Target_Distance="37.73" Target_Twist="-0.93"/>
+  <Neighbor Origin_Id="1617" Target_Id="1605" Goodness_Metric="15.00" Target_Angle="-136.00" Target_Distance="105.72" Target_Twist="-4.47"/>
+  <Neighbor Origin_Id="1617" Target_Id="1606" Goodness_Metric="42.00" Target_Angle="-154.70" Target_Distance="84.20" Target_Twist="-2.46"/>
+  <Neighbor Origin_Id="1617" Target_Id="1607" Goodness_Metric="59.00" Target_Angle="-179.88" Target_Distance="74.90" Target_Twist="0.40"/>
+  <Neighbor Origin_Id="1617" Target_Id="1610" Goodness_Metric="4.00" Target_Angle="-117.56" Target_Distance="85.35" Target_Twist="-2.44"/>
+  <Neighbor Origin_Id="1617" Target_Id="1611" Goodness_Metric="173.00" Target_Angle="-134.79" Target_Distance="53.09" Target_Twist="-0.92"/>
+  <Neighbor Origin_Id="1617" Target_Id="1612" Goodness_Metric="103.00" Target_Angle="179.47" Target_Distance="37.93" Target_Twist="-0.35"/>
+  <Neighbor Origin_Id="1617" Target_Id="1616" Goodness_Metric="2.00" Target_Angle="-88.47" Target_Distance="37.73" Target_Twist="0.93"/>
+  <Way Angle="0.00" Close_Width="0.00" Id="0" DX="5.50" DY="8.75" Flags="" Height="0.00" Name="1600a" Open_Width="0.00" Tag_Id="1600"/>
+  <Way Angle="0.00" Close_Width="0.00" Id="0" DX="10.97" DY="15.47" Flags="" Height="0.00" Name="1606a" Open_Width="0.00" Tag_Id="1606"/>
+  <Way Angle="0.00" Close_Width="0.00" Id="1" DX="-18.28" DY="1.22" Flags="" Height="0.00" Name="1606b" Open_Width="0.00" Tag_Id="1606"/>
+  <Way Angle="0.00" Close_Width="0.00" Id="2" DX="10.72" DY="15.72" Flags="" Height="0.00" Name="1606c" Open_Width="0.00" Tag_Id="1606"/>
+  <Way Angle="0.00" Close_Width="0.00" Id="0" DX="10.18" DY="-4.63" Flags="b" Height="32.00" Name="1607a" Open_Width="11.00" Tag_Id="1607"/>
+  <Way Angle="0.00" Close_Width="0.00" Id="0" DX="2.44" DY="15.29" Flags="" Height="0.00" Name="1611a" Open_Width="0.00" Tag_Id="1611"/>
+  <Way Angle="0.00" Close_Width="0.00" Id="0" DX="0.20" DY="-3.79" Flags="b" Height="32.00" Name="1612a" Open_Width="11.00" Tag_Id="1612"/>
+  <Way Angle="0.00" Close_Width="0.00" Id="0" DX="6.75" DY="-1.32" Flags="" Height="0.00" Name="1615a" Open_Width="0.00" Tag_Id="1615"/>
+  <Way Angle="0.00" Close_Width="0.00" Id="0" DX="-12.58" DY="0.26" Flags="" Height="0.00" Name="1616a" Open_Width="0.00" Tag_Id="1616"/>
+  <Segment Tag1_Id="1600" Way1_Id="0" Tag2_Id="1606" Way2_Id="1"/>
+  <Segment Tag1_Id="1606" Way1_Id="1" Tag2_Id="1606" Way2_Id="2"/>
+  <Segment Tag1_Id="1606" Way1_Id="2" Tag2_Id="1607" Way2_Id="0"/>
+  <Segment Tag1_Id="1606" Way1_Id="2" Tag2_Id="1611" Way2_Id="0"/>
+  <Segment Tag1_Id="1611" Way1_Id="0" Tag2_Id="1612" Way2_Id="0"/>
+  <Segment Tag1_Id="1611" Way1_Id="0" Tag2_Id="1616" Way2_Id="0"/>
+  <Segment Tag1_Id="1615" Way1_Id="0" Tag2_Id="1616" Way2_Id="0"/>
+ </Map>
+</Robot>
