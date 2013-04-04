@@ -140,8 +140,8 @@ class Application(Frame):
 	self.unmove_button = unmove_button
 
 	# Create the map canvas:
-	height = 500
-	width = 800
+	height = 700
+	width = 1000
 	canvas = Canvas(self, bg="white", height = height, width = width)
 	map_canvas = Map_Canvas(canvas, width, height, self)
 	self.map_canvas = map_canvas
@@ -455,87 +455,87 @@ class Application(Frame):
 
 
 	# Create the tag positive ddB label:
-	tag_pddb_label = Label(self, text = "Positive ddB:")
-	self.tag_pddb_label = tag_pddb_label
+	#tag_pddb_label = Label(self, text = "Positive ddB:")
+	#self.tag_pddb_label = tag_pddb_label
 
 	# Create the tag positive ddB entry:
-	tag_pddb_entry = Entry(self, width = 5, background = "white")
-	self.tag_pddb_entry = tag_pddb_entry
+	#tag_pddb_entry = Entry(self, width = 5, background = "white")
+	#self.tag_pddb_entry = tag_pddb_entry
 
 	# Create the tag positive ddX label:
-	tag_pddx_label = Label(self, text = "Positive ddX:")
-	self.tag_pddx_label = tag_pddx_label
+	#tag_pddx_label = Label(self, text = "Positive ddX:")
+	#self.tag_pddx_label = tag_pddx_label
 
 	# Create the tag positive ddX entry:
-	tag_pddx_entry = Entry(self, width = 5, background = "white")
-	self.tag_pddx_entry = tag_pddx_entry
+	#tag_pddx_entry = Entry(self, width = 5, background = "white")
+	#self.tag_pddx_entry = tag_pddx_entry
 
 	# Create the tag positive ddY label:
-	tag_pddy_label = Label(self, text = "Positive ddY:")
-	self.tag_pddy_label = tag_pddy_label
+	#tag_pddy_label = Label(self, text = "Positive ddY:")
+	#self.tag_pddy_label = tag_pddy_label
 
 	# Create the tag positive ddY entry:
-	tag_pddy_entry = Entry(self, width = 5, background = "white")
-	self.tag_pddy_entry = tag_pddy_entry
+	#tag_pddy_entry = Entry(self, width = 5, background = "white")
+	#nself.tag_pddy_entry = tag_pddy_entry
 
 	# Create the tag negative ddB label:
-	tag_nddb_label = Label(self, text = "Negative ddB:")
-	self.tag_nddb_label = tag_nddb_label
+	#tag_nddb_label = Label(self, text = "Negative ddB:")
+	#self.tag_nddb_label = tag_nddb_label
 
 	# Create the tag negative ddB entry:
-	tag_nddb_entry = Entry(self, width = 5, background = "white")
-	self.tag_nddb_entry = tag_nddb_entry
+	#tag_nddb_entry = Entry(self, width = 5, background = "white")
+	#self.tag_nddb_entry = tag_nddb_entry
 
 	# Create the tag negative ddX label:
-	tag_nddx_label = Label(self, text = "Negative ddX:")
-	self.tag_nddx_label = tag_nddx_label
+	#tag_nddx_label = Label(self, text = "Negative ddX:")
+	#self.tag_nddx_label = tag_nddx_label
 
 	# Create the tag negative ddX entry:
-	tag_nddx_entry = Entry(self, width = 5, background = "white")
-	self.tag_nddx_entry = tag_nddx_entry
+	#tag_nddx_entry = Entry(self, width = 5, background = "white")
+	#self.tag_nddx_entry = tag_nddx_entry
 
 	# Create the tag negative ddY label:
-	tag_nddy_label = Label(self, text = "Negative ddY:")
-	self.tag_nddy_label = tag_nddy_label
+	#tag_nddy_label = Label(self, text = "Negative ddY:")
+	#self.tag_nddy_label = tag_nddy_label
 
 	# Create the tag negative ddY entry:
-	tag_nddy_entry = Entry(self, width = 5, background = "white")
-	self.tag_nddy_entry = tag_nddy_entry
+	#tag_nddy_entry = Entry(self, width = 5, background = "white")
+	#self.tag_nddy_entry = tag_nddy_entry
 
 	# Create the [Clear +/- ddX/Y] constants button:
-	clear_pnddbxy_button = Button(self, text = "Clear +/- ddB/X/Y", \
-	  command = self.clear_pnddbxy)
-	self.clear_pnddbxy_button = clear_pnddbxy_button
+	#clear_pnddbxy_button = Button(self, text = "Clear +/- ddB/X/Y", \
+	#  command = self.clear_pnddbxy)
+	#self.clear_pnddbxy_button = clear_pnddbxy_button
 
 
 	# Create the tag anchor ddB label:
-	tag_addb_label = Label(self, text = "Anchor ddB:")
-	self.tag_addb_label = tag_addb_label
+	#tag_addb_label = Label(self, text = "Anchor ddB:")
+	#self.tag_addb_label = tag_addb_label
 
 	# Create the tag anchor ddB entry:
-	tag_addb_entry = Entry(self, width = 5, background = "white")
-	self.tag_addb_entry = tag_addb_entry
+	#tag_addb_entry = Entry(self, width = 5, background = "white")
+	#self.tag_addb_entry = tag_addb_entry
 
 	# Create the tag anchor ddX label:
-	tag_addx_label = Label(self, text = "Anchor ddX:")
-	self.tag_addx_label = tag_addx_label
+	#tag_addx_label = Label(self, text = "Anchor ddX:")
+	#self.tag_addx_label = tag_addx_label
 
 	# Create the tag anchor ddX entry:
-	tag_addx_entry = Entry(self, width = 5, background = "white")
-	self.tag_addx_entry = tag_addx_entry
+	#tag_addx_entry = Entry(self, width = 5, background = "white")
+	#self.tag_addx_entry = tag_addx_entry
 
 	# Create the tag anchor ddY label:
-	tag_addy_label = Label(self, text = "Anchor ddY:")
-	self.tag_addy_label = tag_addy_label
+	#tag_addy_label = Label(self, text = "Anchor ddY:")
+	#self.tag_addy_label = tag_addy_label
 
 	# Create the tag anchor ddY entry:
-	tag_addy_entry = Entry(self, width = 5, background = "white")
-	self.tag_addy_entry = tag_addy_entry
+	#tag_addy_entry = Entry(self, width = 5, background = "white")
+	#self.tag_addy_entry = tag_addy_entry
 
 	# Create the [Clear +/- ddX/Y] constants button:
-	clear_pnddbxy_button = Button(self, text = "Clear +/- ddB/X/Y", \
-	  command = self.clear_pnddbxy)
-	self.clear_pnddbxy_button = clear_pnddbxy_button
+	#clear_pnddbxy_button = Button(self, text = "Clear +/- ddB/X/Y", \
+	#  command = self.clear_pnddbxy)
+	#self.clear_pnddbxy_button = clear_pnddbxy_button
 
 	# Grid the GUI items up:
 	ctl1_row = 0
@@ -656,30 +656,30 @@ class Application(Frame):
 	fiducial_edge_label.grid(row = fid_row, column = 8, sticky = E)
 	fiducial_edge_entry.grid(row = fid_row, column = 9, sticky = W)
 
-	deb1_row = fid_row + 1
-	tag_pddb_label.grid(row = deb1_row, column = 0, sticky = E)
-	tag_pddb_entry.grid(row = deb1_row, column = 1, sticky = W)
-	tag_pddx_label.grid(row = deb1_row, column = 2, sticky = E)
-	tag_pddx_entry.grid(row = deb1_row, column = 3, sticky = W)
-	tag_pddy_label.grid(row = deb1_row, column = 4, sticky = E)
-	tag_pddy_entry.grid(row = deb1_row, column = 5, sticky = W)
-	clear_pnddbxy_button.grid(row = deb1_row, column = 6)
+	#deb1_row = fid_row + 1
+	#tag_pddb_label.grid(row = deb1_row, column = 0, sticky = E)
+	#tag_pddb_entry.grid(row = deb1_row, column = 1, sticky = W)
+	#tag_pddx_label.grid(row = deb1_row, column = 2, sticky = E)
+	#tag_pddx_entry.grid(row = deb1_row, column = 3, sticky = W)
+	#tag_pddy_label.grid(row = deb1_row, column = 4, sticky = E)
+	#tag_pddy_entry.grid(row = deb1_row, column = 5, sticky = W)
+	#clear_pnddbxy_button.grid(row = deb1_row, column = 6)
 
-	deb2_row = deb1_row + 1
-	tag_nddb_label.grid(row = deb2_row, column = 0, sticky = E)
-	tag_nddb_entry.grid(row = deb2_row, column = 1, sticky = W)
-	tag_nddx_label.grid(row = deb2_row, column = 2, sticky = E)
-	tag_nddx_entry.grid(row = deb2_row, column = 3, sticky = W)
-	tag_nddy_label.grid(row = deb2_row, column = 4, sticky = E)
-	tag_nddy_entry.grid(row = deb2_row, column = 5, sticky = W)
+	#deb2_row = deb1_row + 1
+	#tag_nddb_label.grid(row = deb2_row, column = 0, sticky = E)
+	#tag_nddb_entry.grid(row = deb2_row, column = 1, sticky = W)
+	#tag_nddx_label.grid(row = deb2_row, column = 2, sticky = E)
+	#tag_nddx_entry.grid(row = deb2_row, column = 3, sticky = W)
+	#tag_nddy_label.grid(row = deb2_row, column = 4, sticky = E)
+	#tag_nddy_entry.grid(row = deb2_row, column = 5, sticky = W)
 
-	deb3_row = deb2_row + 1
-	tag_addb_label.grid(row = deb3_row, column = 0, sticky = E)
-	tag_addb_entry.grid(row = deb3_row, column = 1, sticky = W)
-	tag_addx_label.grid(row = deb3_row, column = 2, sticky = E)
-	tag_addx_entry.grid(row = deb3_row, column = 3, sticky = W)
-	tag_addy_label.grid(row = deb3_row, column = 4, sticky = E)
-	tag_addy_entry.grid(row = deb3_row, column = 5, sticky = W)
+	#deb3_row = deb2_row + 1
+	#tag_addb_label.grid(row = deb3_row, column = 0, sticky = E)
+	#tag_addb_entry.grid(row = deb3_row, column = 1, sticky = W)
+	#tag_addx_label.grid(row = deb3_row, column = 2, sticky = E)
+	#tag_addx_entry.grid(row = deb3_row, column = 3, sticky = W)
+	#tag_addy_label.grid(row = deb3_row, column = 4, sticky = E)
+	#tag_addy_entry.grid(row = deb3_row, column = 5, sticky = W)
 
 	# Bind mouse buttons to {map_canvas}:
 	canvas.bind("<Button-1>", self.mouse_left)
